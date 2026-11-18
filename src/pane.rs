@@ -72,10 +72,6 @@ impl Pane {
         }
     }
 
-    pub fn title(&self) -> String {
-        format!("{}: {}", self.backend.label(), self.cwd.display())
-    }
-
     pub fn selected(&self) -> Option<&Entry> {
         self.items.get(self.cursor)
     }

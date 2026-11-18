@@ -92,6 +92,16 @@ fn elide_start(s: &str, max: usize) -> String {
     format!("…{tail}")
 }
 
+/// Fits `head + path + tail` in `max` chars by eliding the start of `path`
+/// only, so labels like "Local: " survive long paths.
+fn elide_path(head: &str, path: &str, tail: &str, max: usize) -> String {
+    let fixed = head.chars().count() + tail.chars().count();
+    if fixed + 2 > max {
+        return elide_start(&format!("{head}{path}{tail}"), max);
+    }
+    format!("{head}{}{tail}", elide_start(path, max - fixed))
+}
+
 fn block(title: String, active: bool) -> Block<'static> {
     let style = if active { Style::new().fg(ACCENT) } else { Style::new().dark_gray() };
     Block::bordered()
@@ -101,14 +111,16 @@ fn block(title: String, active: bool) -> Block<'static> {
 }
 
 fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
-    let mut title = pane.title();
+    let head = format!("{}: ", pane.backend.label());
+    let mut tail = String::new();
     if pane.loading {
-        title.push_str(" (loading…)");
+        tail.push_str(" (loading…)");
     }
     if !pane.marked.is_empty() {
-        title.push_str(&format!(" [{} marked]", pane.marked.len()));
+        tail.push_str(&format!(" [{} marked]", pane.marked.len()));
     }
-    let b = block(elide_start(&title, area.width.saturating_sub(6) as usize), active);
+    let path = pane.cwd.display().to_string();
+    let b = block(elide_path(&head, &path, &tail, area.width.saturating_sub(6) as usize), active);
     let inner = b.inner(area);
     f.render_widget(b, area);
 
@@ -366,9 +378,9 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
     let full = f.area();
     let area = centered(full, full.width * 9 / 10, full.height * 9 / 10);
     f.render_widget(Clear, area);
-    let title =
-        if s.is_finder() { format!("Find files in {}", s.root_display()) } else { format!("Search text in {}", s.root_display()) };
-    let b = block(elide_start(&title, area.width.saturating_sub(6) as usize), true);
+    let verb = if s.is_finder() { "Find files in" } else { "Search text in" };
+    let head = format!("{verb} {}:", s.backend.label());
+    let b = block(elide_path(&head, &s.root.display().to_string(), "", area.width.saturating_sub(6) as usize), true);
     let inner = b.inner(area);
     f.render_widget(b, area);
 

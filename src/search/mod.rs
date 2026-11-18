@@ -6,7 +6,7 @@ pub mod grep;
 pub mod input;
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -411,10 +411,6 @@ impl SearchModal {
             }
         }
         Action::None
-    }
-
-    pub fn root_display(&self) -> String {
-        format!("{}:{}", self.backend.label(), Path::new(&self.root).display())
     }
 }
 

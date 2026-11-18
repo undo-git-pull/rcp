@@ -979,9 +979,11 @@ fn grep_script(root: &str, q: &GrepQuery, pcre: bool) -> String {
         };
         s += &format!(" {flag}={}", quote(base));
     }
-    // `.?*` rather than `.*`, which would also exclude the `.` start dir.
+    // `.[!/]*` rather than `.*`, which would also exclude the `.` start dir.
+    // Not `.?*`: BSD grep also matches globs against the whole `./sub/path`,
+    // where `?*` would swallow the slash and exclude everything.
     if !q.hidden {
-        s += " --exclude='.?*' --exclude-dir='.?*'";
+        s += " --exclude='.[!/]*' --exclude-dir='.[!/]*'";
     }
     s + " -e " + &quote(&q.pattern) + " . 2>/dev/null"
 }
@@ -1123,7 +1125,7 @@ mod tests {
         assert_eq!(
             grep_script("/r", &q, true),
             "cd -- /r 2>/dev/null || exit 99; exec grep -rnI --null --color=never -F -w --exclude-dir=.git \
-             --include='*.rs' --exclude-dir=target --exclude='*.min.js' --exclude='.?*' --exclude-dir='.?*' \
+             --include='*.rs' --exclude-dir=target --exclude='*.min.js' --exclude='.[!/]*' --exclude-dir='.[!/]*' \
              -e 'Foo bar' . 2>/dev/null"
         );
         let q = GrepQuery { pattern: "a|b".into(), regex: true, hidden: true, globs: vec![], ..q };
