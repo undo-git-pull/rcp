@@ -51,7 +51,12 @@ fn count(b: &dyn Backend, dir: &Path, cancel: &AtomicBool, s: &mut Summary) -> R
 }
 
 /// Deletes `path` bottom-up. `on_item` is called after each removal.
-pub fn delete(b: &dyn Backend, path: &Path, cancel: &AtomicBool, on_item: &mut dyn FnMut(&str)) -> Result<()> {
+pub fn delete(
+    b: &dyn Backend,
+    path: &Path,
+    cancel: &AtomicBool,
+    on_item: &mut dyn FnMut(&str),
+) -> Result<()> {
     if is_real_dir(b, path)? {
         delete_dir(b, path, cancel, on_item)
     } else {
@@ -61,7 +66,12 @@ pub fn delete(b: &dyn Backend, path: &Path, cancel: &AtomicBool, on_item: &mut d
     }
 }
 
-fn delete_dir(b: &dyn Backend, dir: &Path, cancel: &AtomicBool, on_item: &mut dyn FnMut(&str)) -> Result<()> {
+fn delete_dir(
+    b: &dyn Backend,
+    dir: &Path,
+    cancel: &AtomicBool,
+    on_item: &mut dyn FnMut(&str),
+) -> Result<()> {
     for c in b.list(dir)? {
         if cancel.load(Ordering::Relaxed) {
             return Err(Cancelled.into());

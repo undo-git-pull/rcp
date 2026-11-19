@@ -109,7 +109,13 @@ pub trait Backend: Send + Sync {
 
     /// Stream every file under `root` as `SearchEvent::Path` until done or
     /// `cancel` is set.
-    fn walk_files(&self, root: &Path, opts: WalkOpts, emit: Emit, cancel: &AtomicBool) -> Result<()>;
+    fn walk_files(
+        &self,
+        root: &Path,
+        opts: WalkOpts,
+        emit: Emit,
+        cancel: &AtomicBool,
+    ) -> Result<()>;
     /// Stream matching lines under `root` as `SearchEvent::Match`.
     fn grep(&self, root: &Path, query: &GrepQuery, emit: Emit, cancel: &AtomicBool) -> Result<()>;
 

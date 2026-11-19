@@ -29,7 +29,10 @@ fn open(loc: Location, args: &Args) -> Result<(Arc<dyn Backend>, PathBuf)> {
         }
         Location::Remote { mut target, path } => {
             target.port = args.port.or(target.port);
-            let opts = ConnectOpts { identity: args.identity.clone(), jump: args.jump.clone() };
+            let opts = ConnectOpts {
+                identity: args.identity.clone(),
+                jump: args.jump.clone(),
+            };
             let b = SftpFs::connect(&target, &opts)?;
             let cwd = b.canonicalize(&PathBuf::from(&path))?;
             Ok((Arc::new(b), cwd))
@@ -49,7 +52,10 @@ fn main() -> Result<()> {
     // the terminal switches to raw mode.
     let (rb, rcwd) = open(right, &args)?;
 
-    let app = app::App::new(Pane::new(lb, lcwd, args.hidden), Pane::new(rb, rcwd, args.hidden));
+    let app = app::App::new(
+        Pane::new(lb, lcwd, args.hidden),
+        Pane::new(rb, rcwd, args.hidden),
+    );
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();

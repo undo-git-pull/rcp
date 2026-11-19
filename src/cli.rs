@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "rcp", version, about = "Two-pane TUI file copier (local and SSH)")]
+#[command(
+    name = "rcp",
+    version,
+    about = "Two-pane TUI file copier (local and SSH)"
+)]
 pub struct Args {
     /// Local directory for the left pane (default: current directory)
     pub left: Option<PathBuf>,
@@ -35,7 +39,10 @@ pub struct RemoteTarget {
 pub enum Location {
     Local(PathBuf),
     /// `path` is empty for the remote home directory.
-    Remote { target: RemoteTarget, path: String },
+    Remote {
+        target: RemoteTarget,
+        path: String,
+    },
 }
 
 /// Parses `user@host:path`, `host:path`, `host:`, `[::1]:path` or a local
@@ -46,7 +53,9 @@ pub fn parse_location(s: &str) -> Location {
         return Location::Local(PathBuf::from(s));
     }
     let (user, rest) = match s.split_once('@') {
-        Some((u, r)) if !u.is_empty() && !u.contains('/') && !u.contains(':') => (Some(u.to_string()), r),
+        Some((u, r)) if !u.is_empty() && !u.contains('/') && !u.contains(':') => {
+            (Some(u.to_string()), r)
+        }
         _ => (None, s),
     };
     let (host, path) = if let Some(stripped) = rest.strip_prefix('[') {
@@ -64,7 +73,11 @@ pub fn parse_location(s: &str) -> Location {
         return Location::Local(PathBuf::from(s));
     }
     Location::Remote {
-        target: RemoteTarget { user, host: host.to_string(), port: None },
+        target: RemoteTarget {
+            user,
+            host: host.to_string(),
+            port: None,
+        },
         path: path.to_string(),
     }
 }
@@ -84,24 +97,43 @@ mod tests {
 
     fn remote(user: Option<&str>, host: &str, path: &str) -> Location {
         Location::Remote {
-            target: RemoteTarget { user: user.map(String::from), host: host.into(), port: None },
+            target: RemoteTarget {
+                user: user.map(String::from),
+                host: host.into(),
+                port: None,
+            },
             path: path.into(),
         }
     }
 
     #[test]
     fn parses_remote_forms() {
-        assert_eq!(parse_location("nas:/volume1"), remote(None, "nas", "/volume1"));
-        assert_eq!(parse_location("ray@10.0.0.5:/srv/www"), remote(Some("ray"), "10.0.0.5", "/srv/www"));
+        assert_eq!(
+            parse_location("nas:/volume1"),
+            remote(None, "nas", "/volume1")
+        );
+        assert_eq!(
+            parse_location("ray@10.0.0.5:/srv/www"),
+            remote(Some("ray"), "10.0.0.5", "/srv/www")
+        );
         assert_eq!(parse_location("host:"), remote(None, "host", ""));
-        assert_eq!(parse_location("host:rel/dir"), remote(None, "host", "rel/dir"));
-        assert_eq!(parse_location("u@[::1]:/tmp"), remote(Some("u"), "::1", "/tmp"));
+        assert_eq!(
+            parse_location("host:rel/dir"),
+            remote(None, "host", "rel/dir")
+        );
+        assert_eq!(
+            parse_location("u@[::1]:/tmp"),
+            remote(Some("u"), "::1", "/tmp")
+        );
     }
 
     #[test]
     fn parses_local_forms() {
         assert_eq!(parse_location("/tmp"), Location::Local("/tmp".into()));
-        assert_eq!(parse_location("some/dir"), Location::Local("some/dir".into()));
+        assert_eq!(
+            parse_location("some/dir"),
+            Location::Local("some/dir".into())
+        );
         assert_eq!(parse_location("./a:b"), Location::Local("./a:b".into()));
         assert_eq!(parse_location("[::1"), Location::Local("[::1".into()));
     }

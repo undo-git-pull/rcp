@@ -22,17 +22,29 @@ const MATCH: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
 /// highlight whatever the terminal's default foreground is.
 const SELECTED: Style = Style::new().fg(Color::Black).bg(Color::Cyan);
 const SELECTED_DIM: Style = Style::new().fg(Color::Black).bg(Color::Gray);
-const MATCH_SELECTED: Style = Style::new().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD);
+const MATCH_SELECTED: Style = Style::new()
+    .fg(Color::Black)
+    .bg(Color::Yellow)
+    .add_modifier(Modifier::BOLD);
 
 /// Match highlight that stays readable on both plain and selected rows.
 fn match_style(base: Style) -> Style {
-    base.patch(if base.bg.is_some() { MATCH_SELECTED } else { MATCH })
+    base.patch(if base.bg.is_some() {
+        MATCH_SELECTED
+    } else {
+        MATCH
+    })
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let [main, status, hints] =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)]).areas(f.area());
-    let [left, right] = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
+    let [main, status, hints] = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(f.area());
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
     let active = app.active;
     app.preview_height = main.height.saturating_sub(2) as usize;
 
@@ -103,11 +115,22 @@ fn elide_path(head: &str, path: &str, tail: &str, max: usize) -> String {
 }
 
 fn block(title: String, active: bool) -> Block<'static> {
-    let style = if active { Style::new().fg(ACCENT) } else { Style::new().dark_gray() };
+    let style = if active {
+        Style::new().fg(ACCENT)
+    } else {
+        Style::new().dark_gray()
+    };
     Block::bordered()
-        .border_type(if active { BorderType::Thick } else { BorderType::Plain })
+        .border_type(if active {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        })
         .border_style(style)
-        .title(Span::styled(format!(" {title} "), style.add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            format!(" {title} "),
+            style.add_modifier(Modifier::BOLD),
+        ))
 }
 
 fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
@@ -120,12 +143,20 @@ fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
         tail.push_str(&format!(" [{} marked]", pane.marked.len()));
     }
     let path = pane.cwd.display().to_string();
-    let b = block(elide_path(&head, &path, &tail, area.width.saturating_sub(6) as usize), active);
+    let b = block(
+        elide_path(&head, &path, &tail, area.width.saturating_sub(6) as usize),
+        active,
+    );
     let inner = b.inner(area);
     f.render_widget(b, area);
 
     if let Some(err) = &pane.error {
-        f.render_widget(Paragraph::new(err.as_str()).red().wrap(Wrap { trim: false }), inner);
+        f.render_widget(
+            Paragraph::new(err.as_str())
+                .red()
+                .wrap(Wrap { trim: false }),
+            inner,
+        );
         return;
     }
     let wide = inner.width >= 56;
@@ -143,15 +174,26 @@ fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
             (false, true) => Style::new().fg(Color::Blue).bold(),
             _ => Style::new(),
         };
-        let size = if e.is_dir() { "<dir>".to_string() } else { format_size(e.size, BINARY) };
+        let size = if e.is_dir() {
+            "<dir>".to_string()
+        } else {
+            format_size(e.size, BINARY)
+        };
         let mut cells = vec![
-            Cell::from(Span::styled(format!("{}{name}", if marked { "*" } else { " " }), name_style)),
+            Cell::from(Span::styled(
+                format!("{}{name}", if marked { "*" } else { " " }),
+                name_style,
+            )),
             Cell::from(Line::from(size).right_aligned()),
         ];
         if wide {
             let t = e
                 .modified
-                .map(|m| chrono::DateTime::<chrono::Local>::from(m).format("%Y-%m-%d %H:%M").to_string())
+                .map(|m| {
+                    chrono::DateTime::<chrono::Local>::from(m)
+                        .format("%Y-%m-%d %H:%M")
+                        .to_string()
+                })
                 .unwrap_or_default();
             cells.push(Cell::from(t).dark_gray());
         }
@@ -162,8 +204,12 @@ fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
         widths.push(Constraint::Length(16));
     }
     let highlight = if active { SELECTED } else { SELECTED_DIM };
-    let table = Table::new(rows, widths).row_highlight_style(highlight).column_spacing(1);
-    let mut state = TableState::new().with_offset(pane.offset).with_selected(Some(pane.cursor));
+    let table = Table::new(rows, widths)
+        .row_highlight_style(highlight)
+        .column_spacing(1);
+    let mut state = TableState::new()
+        .with_offset(pane.offset)
+        .with_selected(Some(pane.cursor));
     f.render_stateful_widget(table, inner, &mut state);
     pane.offset = state.offset();
 }
@@ -178,7 +224,10 @@ fn highlighted(text: &str, ranges: &[std::ops::Range<usize>], base: Style) -> Ve
             continue;
         }
         spans.push(Span::styled(text[pos..start].to_string(), base));
-        spans.push(Span::styled(text[start..end].to_string(), match_style(base)));
+        spans.push(Span::styled(
+            text[start..end].to_string(),
+            match_style(base),
+        ));
         pos = end;
     }
     spans.push(Span::styled(text[pos..].to_string(), base));
@@ -205,10 +254,17 @@ fn draw_preview(f: &mut Frame, area: Rect, p: &mut Preview, label: Option<&str>,
 
     let lines: Vec<Line> = match &p.body {
         Body::Message(m) => vec![Line::from(m.clone()).dark_gray()],
-        Body::Hex(lines) | Body::Dir(lines) => {
-            lines.iter().skip(scroll).take(height).map(|l| Line::from(l.clone())).collect()
-        }
-        Body::Text { first_line, lines, numbered } => {
+        Body::Hex(lines) | Body::Dir(lines) => lines
+            .iter()
+            .skip(scroll)
+            .take(height)
+            .map(|l| Line::from(l.clone()))
+            .collect(),
+        Body::Text {
+            first_line,
+            lines,
+            numbered,
+        } => {
             let width = (first_line + lines.len() as u64).to_string().len();
             lines
                 .iter()
@@ -218,10 +274,17 @@ fn draw_preview(f: &mut Frame, area: Rect, p: &mut Preview, label: Option<&str>,
                 .map(|(i, l)| {
                     let n = first_line + i as u64;
                     let focus = p.focus.as_ref().filter(|(fl, _)| *fl == n);
-                    let base = if focus.is_some() { SELECTED_DIM } else { Style::new() };
+                    let base = if focus.is_some() {
+                        SELECTED_DIM
+                    } else {
+                        Style::new()
+                    };
                     let mut spans = vec![];
                     if *numbered {
-                        spans.push(Span::styled(format!("{n:>width$} "), Style::new().dark_gray()));
+                        spans.push(Span::styled(
+                            format!("{n:>width$} "),
+                            Style::new().dark_gray(),
+                        ));
                     }
                     match focus {
                         Some((_, ranges)) => spans.extend(highlighted(l, ranges, base)),
@@ -239,7 +302,11 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     let line = match &app.job {
         Some(j) => progress_line(j, app.queued.len(), area.width),
         None => {
-            let style = if app.status_error { Style::new().red() } else { Style::new() };
+            let style = if app.status_error {
+                Style::new().red()
+            } else {
+                Style::new()
+            };
             Line::styled(app.status.clone(), style)
         }
     };
@@ -276,25 +343,46 @@ fn progress_line(j: &JobStatus, queued: usize, width: u16) -> Line<'static> {
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
-    Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 fn draw_modal(f: &mut Frame, m: &Modal, app: &App) {
     let (title, lines): (&str, Vec<Line>) = match m {
-        Modal::ConfirmDelete { side, what, summary, .. } => (
+        Modal::ConfirmDelete {
+            side,
+            what,
+            summary,
+            ..
+        } => (
             "Delete",
             vec![
-                Line::from(format!("Delete {what} from {}?", app.pane(*side).backend.label())).bold(),
+                Line::from(format!(
+                    "Delete {what} from {}?",
+                    app.pane(*side).backend.label()
+                ))
+                .bold(),
                 Line::from(summary.clone().unwrap_or_else(|| "counting…".into())).dark_gray(),
                 Line::from(""),
-                Line::from(vec![Span::raw("y").red().bold(), Span::raw(" delete   any other key: cancel")]),
+                Line::from(vec![
+                    Span::raw("y").red().bold(),
+                    Span::raw(" delete   any other key: cancel"),
+                ]),
             ],
         ),
         Modal::Conflict { path, is_dir, .. } => (
             "Already exists",
             vec![
                 Line::from(path.clone()).bold(),
-                Line::from(if *is_dir { "This directory already exists." } else { "This file already exists." }),
+                Line::from(if *is_dir {
+                    "This directory already exists."
+                } else {
+                    "This file already exists."
+                }),
                 Line::from(""),
                 hint_line(&[
                     ("o", if *is_dir { "merge" } else { "overwrite" }),
@@ -307,25 +395,42 @@ fn draw_modal(f: &mut Frame, m: &Modal, app: &App) {
         ),
         Modal::ConfirmQuit => (
             "Quit",
-            vec![Line::from("A transfer is running. Cancel it and quit?"), Line::from(""), Line::from("y / N")],
+            vec![
+                Line::from("A transfer is running. Cancel it and quit?"),
+                Line::from(""),
+                Line::from("y / N"),
+            ],
         ),
         Modal::ConfirmCopy { what, dest, .. } => (
             "Copy",
             vec![
                 Line::from(format!("Copy {what} to {dest}?")).bold(),
                 Line::from(""),
-                Line::from(vec![Span::raw("y").fg(ACCENT).bold(), Span::raw(" copy   any other key: cancel")]),
+                Line::from(vec![
+                    Span::raw("y").fg(ACCENT).bold(),
+                    Span::raw(" copy   any other key: cancel"),
+                ]),
             ],
         ),
-        Modal::ConfirmCancel => {
-            ("Cancel", vec![Line::from("Cancel the running transfer?"), Line::from(""), Line::from("y / N")])
-        }
+        Modal::ConfirmCancel => (
+            "Cancel",
+            vec![
+                Line::from("Cancel the running transfer?"),
+                Line::from(""),
+                Line::from("y / N"),
+            ],
+        ),
         Modal::Help => ("Help", help_lines()),
     };
     let w = lines.iter().map(|l| l.width()).max().unwrap_or(20).max(30) as u16 + 4;
     let area = centered(f.area(), w, lines.len() as u16 + 2);
     f.render_widget(Clear, area);
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block(title.into(), true)), area);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(block(title.into(), true)),
+        area,
+    );
 }
 
 fn help_lines() -> Vec<Line<'static>> {
@@ -360,7 +465,10 @@ fn help_lines() -> Vec<Line<'static>> {
             if v.is_empty() {
                 Line::from(k.to_string()).bold()
             } else {
-                Line::from(vec![Span::raw(format!("{k:>24}  ")).fg(ACCENT), Span::raw(v.to_string())])
+                Line::from(vec![
+                    Span::raw(format!("{k:>24}  ")).fg(ACCENT),
+                    Span::raw(v.to_string()),
+                ])
             }
         })
         .collect()
@@ -378,9 +486,21 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
     let full = f.area();
     let area = centered(full, full.width * 9 / 10, full.height * 9 / 10);
     f.render_widget(Clear, area);
-    let verb = if s.is_finder() { "Find files in" } else { "Search text in" };
+    let verb = if s.is_finder() {
+        "Find files in"
+    } else {
+        "Search text in"
+    };
     let head = format!("{verb} {}:", s.backend.label());
-    let b = block(elide_path(&head, &s.root.display().to_string(), "", area.width.saturating_sub(6) as usize), true);
+    let b = block(
+        elide_path(
+            &head,
+            &s.root.display().to_string(),
+            "",
+            area.width.saturating_sub(6) as usize,
+        ),
+        true,
+    );
     let inner = b.inner(area);
     f.render_widget(b, area);
 
@@ -405,32 +525,60 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
         Mode::Grep(g) => {
             right.push(tag(g.regex, "regex"));
             right.push(tag(!g.regex, "fixed"));
-            right.push(tag(true, match g.case {
-                CaseMode::Smart => "smart-case",
-                CaseMode::Sensitive => "case",
-                CaseMode::Insensitive => "ignore-case",
-            }));
+            right.push(tag(
+                true,
+                match g.case {
+                    CaseMode::Smart => "smart-case",
+                    CaseMode::Sensitive => "case",
+                    CaseMode::Insensitive => "ignore-case",
+                },
+            ));
             right.push(tag(g.whole_word, "word"));
             let n = g.results.count;
-            right.push(Span::raw(if g.truncated { format!("{MAX_HITS}+ hits") } else { format!("{n} hits") }));
+            right.push(Span::raw(if g.truncated {
+                format!("{MAX_HITS}+ hits")
+            } else {
+                format!("{n} hits")
+            }));
         }
     }
     right.insert(0, tag(s.hidden, "hidden"));
     right.insert(1, tag(!s.respect_ignore, "no-ignore"));
-    right.push(Span::raw(if s.running { " · searching…" } else { " · done" }).dark_gray());
+    right.push(
+        Span::raw(if s.running {
+            " · searching…"
+        } else {
+            " · done"
+        })
+        .dark_gray(),
+    );
     let right = Line::from(right).right_aligned();
     let rw = right.width() as u16;
-    let [q_area, r_area] = Layout::horizontal([Constraint::Min(10), Constraint::Length(rw)]).areas(query);
-    f.render_widget(Paragraph::new(Line::from(vec![Span::raw("> ").fg(ACCENT).bold(), Span::raw(s.input.text.clone())])), q_area);
+    let [q_area, r_area] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(rw)]).areas(query);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw("> ").fg(ACCENT).bold(),
+            Span::raw(s.input.text.clone()),
+        ])),
+        q_area,
+    );
     f.render_widget(Paragraph::new(right), r_area);
 
     let mut cursor = Position::new(q_area.x + 2 + s.input.cursor as u16, q_area.y);
     if let Mode::Grep(g) = &s.mode
         && glob_line
     {
-        let style = if g.glob_focus { Style::new().fg(ACCENT) } else { Style::new().dark_gray() };
+        let style = if g.glob_focus {
+            Style::new().fg(ACCENT)
+        } else {
+            Style::new().dark_gray()
+        };
         f.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled("glob ", style), Span::raw(g.glob.text.clone())])),
+            Paragraph::new(Line::from(vec![
+                Span::styled("glob ", style),
+                Span::raw(g.glob.text.clone()),
+            ])),
             glob,
         );
         if g.glob_focus {
@@ -458,18 +606,32 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
             } else if s.cursor >= s.offset + h {
                 s.offset = s.cursor + 1 - h;
             }
-            for (i, (path, idx)) in fd.visible(s.offset as u32, (s.offset + h) as u32).into_iter().enumerate() {
+            for (i, (path, idx)) in fd
+                .visible(s.offset as u32, (s.offset + h) as u32)
+                .into_iter()
+                .enumerate()
+            {
                 let selected = s.offset + i == s.cursor;
                 let base = if selected { SELECTED } else { Style::new() };
                 let mark = if s.marked.contains(&path) { "* " } else { "  " };
-                let mut spans = vec![Span::styled(mark, if selected { base } else { base.fg(Color::Yellow) })];
+                let mut spans = vec![Span::styled(
+                    mark,
+                    if selected {
+                        base
+                    } else {
+                        base.fg(Color::Yellow)
+                    },
+                )];
                 let mut hi = idx.iter().peekable();
                 for (ci, ch) in path.chars().enumerate() {
                     let m = hi.peek().is_some_and(|&&x| x as usize == ci);
                     if m {
                         hi.next();
                     }
-                    spans.push(Span::styled(ch.to_string(), if m { match_style(base) } else { base }));
+                    spans.push(Span::styled(
+                        ch.to_string(),
+                        if m { match_style(base) } else { base },
+                    ));
                 }
                 lines.push(Line::from(spans).style(base));
             }
@@ -496,8 +658,19 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
                         ])
                     }
                     GrepRow::Hit(hit) => {
-                        let mut spans = vec![Span::styled(format!("{:>6}: ", hit.line_no), if selected { base } else { base.fg(Color::Green) })];
-                        spans.extend(highlighted(hit.line.trim_start(), &shift(&hit.line, &hit.ranges), base));
+                        let mut spans = vec![Span::styled(
+                            format!("{:>6}: ", hit.line_no),
+                            if selected {
+                                base
+                            } else {
+                                base.fg(Color::Green)
+                            },
+                        )];
+                        spans.extend(highlighted(
+                            hit.line.trim_start(),
+                            &shift(&hit.line, &hit.ranges),
+                            base,
+                        ));
                         Line::from(spans).style(base)
                     }
                 });
@@ -509,12 +682,27 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
     s.preview_height = preview_area.height.saturating_sub(2) as usize;
     match &mut s.preview {
         Some(p) => draw_preview(f, preview_area, p, None, false),
-        None => f.render_widget(Block::bordered().border_style(Style::new().dark_gray()), preview_area),
+        None => f.render_widget(
+            Block::bordered().border_style(Style::new().dark_gray()),
+            preview_area,
+        ),
     }
 
-    let mut h = vec![("Enter", "jump"), ("^Y", "copy"), ("Tab", "mark"), ("S-↑↓", "scroll preview"), ("M-h", "hidden"), ("M-i", "ignore")];
+    let mut h = vec![
+        ("Enter", "jump"),
+        ("^Y", "copy"),
+        ("Tab", "mark"),
+        ("S-↑↓", "scroll preview"),
+        ("M-h", "hidden"),
+        ("M-i", "ignore"),
+    ];
     if !s.is_finder() {
-        h.extend([("M-r", "regex"), ("M-c", "case"), ("M-w", "word"), ("M-g", "glob")]);
+        h.extend([
+            ("M-r", "regex"),
+            ("M-c", "case"),
+            ("M-w", "word"),
+            ("M-g", "glob"),
+        ]);
     }
     h.push(("Esc", "close"));
     f.render_widget(Paragraph::new(hint_line(&h)), hints);
@@ -523,5 +711,9 @@ fn draw_search(f: &mut Frame, s: &mut SearchModal) {
 /// Adjusts match ranges after the line's leading whitespace is trimmed.
 fn shift(line: &str, ranges: &[std::ops::Range<usize>]) -> Vec<std::ops::Range<usize>> {
     let cut = line.len() - line.trim_start().len();
-    ranges.iter().filter(|r| r.end > cut).map(|r| r.start.saturating_sub(cut)..r.end - cut).collect()
+    ranges
+        .iter()
+        .filter(|r| r.end > cut)
+        .map(|r| r.start.saturating_sub(cut)..r.end - cut)
+        .collect()
 }

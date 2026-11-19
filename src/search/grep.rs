@@ -83,7 +83,9 @@ impl Results {
     pub fn rows(&self, start: usize, len: usize) -> Vec<Row<'_>> {
         self.groups
             .iter()
-            .flat_map(|g| std::iter::once(Row::File(&g.path, g.hits.len())).chain(g.hits.iter().map(Row::Hit)))
+            .flat_map(|g| {
+                std::iter::once(Row::File(&g.path, g.hits.len())).chain(g.hits.iter().map(Row::Hit))
+            })
             .skip(start)
             .take(len)
             .collect()
@@ -95,7 +97,11 @@ mod tests {
     use super::*;
 
     fn hit(n: u64) -> Hit {
-        Hit { line_no: n, line: format!("l{n}"), ranges: vec![] }
+        Hit {
+            line_no: n,
+            line: format!("l{n}"),
+            ranges: vec![],
+        }
     }
 
     #[test]

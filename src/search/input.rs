@@ -10,7 +10,11 @@ pub struct Input {
 
 impl Input {
     fn byte_at(&self, char_idx: usize) -> usize {
-        self.text.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(self.text.len())
+        self.text
+            .char_indices()
+            .nth(char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len())
     }
 
     fn len(&self) -> usize {

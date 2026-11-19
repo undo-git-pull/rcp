@@ -19,8 +19,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use grep_matcher::Matcher;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use ssh2::{
-    CheckResult, ErrorCode, ExtendedData, HashType, KeyboardInteractivePrompt, KnownHostFileKind, MethodType,
-    OpenFlags, OpenType, Prompt, RenameFlags, Session, Sftp,
+    CheckResult, ErrorCode, ExtendedData, HashType, KeyboardInteractivePrompt, KnownHostFileKind,
+    MethodType, OpenFlags, OpenType, Prompt, RenameFlags, Session, Sftp,
 };
 
 use super::jump::{self, Jump};
@@ -63,7 +63,10 @@ struct Dest {
 enum Cred {
     None,
     Agent,
-    Key { path: PathBuf, passphrase: Option<String> },
+    Key {
+        path: PathBuf,
+        passphrase: Option<String>,
+    },
     Password(String),
     Keyboard(String),
 }
@@ -104,10 +107,17 @@ impl SftpFs {
     pub fn connect(target: &RemoteTarget, opts: &ConnectOpts) -> Result<SftpFs> {
         let dest = resolve(target, opts);
         let jump = dest.jump.as_deref().map(Jump::start).transpose()?;
-        let (sess, host_key) = open_session(&dest, jump.as_ref(), HostCheck::KnownHosts(&known_hosts_path()))?;
+        let (sess, host_key) = open_session(
+            &dest,
+            jump.as_ref(),
+            HostCheck::KnownHosts(&known_hosts_path()),
+        )?;
         let cred = authenticate(&sess, &dest, opts)?;
         let conn = sftp_conn(sess).with_context(|| format!("sftp {}", dest.alias))?;
-        let home = conn.sftp.realpath(Path::new(".")).with_context(|| format!("resolve home on {}", dest.alias))?;
+        let home = conn
+            .sftp
+            .realpath(Path::new("."))
+            .with_context(|| format!("resolve home on {}", dest.alias))?;
         Ok(SftpFs {
             dest,
             cred,
@@ -126,14 +136,22 @@ impl SftpFs {
 
     /// A fresh authenticated session, without prompting.
     fn new_session(&self) -> Result<Session> {
-        let (sess, _) = open_session(&self.dest, self.jump.as_ref(), HostCheck::Pinned(&self.host_key))?;
+        let (sess, _) = open_session(
+            &self.dest,
+            self.jump.as_ref(),
+            HostCheck::Pinned(&self.host_key),
+        )?;
         reauth(&sess, &self.dest.user, &self.cred)?;
         Ok(sess)
     }
 
     /// Empty or relative paths resolve against the remote home.
     fn abs(&self, p: &Path) -> PathBuf {
-        if p.is_absolute() { p.to_path_buf() } else { self.home.join(p) }
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.home.join(p)
+        }
     }
 
     fn ctx(&self, op: &str, p: &Path) -> String {
@@ -143,13 +161,22 @@ impl SftpFs {
     fn entry(&self, sftp: &Sftp, name: String, path: &Path, lstat: ssh2::FileStat) -> Entry {
         let is_symlink = lstat.file_type().is_symlink();
         // A dangling symlink falls back to the link's own metadata.
-        let st = if is_symlink { sftp.stat(path).unwrap_or(lstat) } else { lstat };
+        let st = if is_symlink {
+            sftp.stat(path).unwrap_or(lstat)
+        } else {
+            lstat
+        };
         entry_from(name, is_symlink, &st)
     }
 
     /// Runs `script` under `sh -c` on a pooled exec session, feeding stdout
     /// to `sink`. Returns the exit status, or `None` if cancelled.
-    fn exec(&self, script: &str, cancel: &AtomicBool, sink: &mut dyn FnMut(&[u8])) -> Result<Option<i32>> {
+    fn exec(
+        &self,
+        script: &str,
+        cancel: &AtomicBool,
+        sink: &mut dyn FnMut(&[u8]),
+    ) -> Result<Option<i32>> {
         let pooled = self.exec_pool.lock().unwrap().pop();
         let (sess, res) = match pooled {
             // A pooled session may have been dropped by the server while idle.
@@ -206,7 +233,13 @@ impl SftpFs {
     }
 
     /// Slow fallback when the server allows SFTP only.
-    fn walk_sftp(&self, root: &Path, opts: WalkOpts, emit: Emit, cancel: &AtomicBool) -> Result<()> {
+    fn walk_sftp(
+        &self,
+        root: &Path,
+        opts: WalkOpts,
+        emit: Emit,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
         emit(SearchEvent::Error(format!(
             "{}: no shell access, walking over SFTP (slow, max depth {FALLBACK_DEPTH})",
             self.dest.alias
@@ -214,7 +247,9 @@ impl SftpFs {
         let conn = self.sftp();
         let mut stack = vec![(root.to_path_buf(), String::new(), 0)];
         while let Some((dir, rel, depth)) = stack.pop() {
-            let Ok(items) = conn.sftp.readdir(&dir) else { continue };
+            let Ok(items) = conn.sftp.readdir(&dir) else {
+                continue;
+            };
             for (path, st) in items {
                 if cancel.load(Ordering::Relaxed) {
                     return Ok(());
@@ -223,7 +258,11 @@ impl SftpFs {
                 if name == ".git" || (!opts.hidden && name.starts_with('.')) {
                     continue;
                 }
-                let r = if rel.is_empty() { name } else { format!("{rel}/{name}") };
+                let r = if rel.is_empty() {
+                    name
+                } else {
+                    format!("{rel}/{name}")
+                };
                 // lstat data: symlinks are neither, so they are never followed.
                 if st.is_dir() && depth < FALLBACK_DEPTH {
                     stack.push((path, r, depth + 1));
@@ -247,14 +286,23 @@ impl Backend for SftpFs {
 
     fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         let p = self.abs(path);
-        self.sftp().sftp.realpath(&p).with_context(|| self.ctx("resolve", &p))
+        self.sftp()
+            .sftp
+            .realpath(&p)
+            .with_context(|| self.ctx("resolve", &p))
     }
 
     fn list(&self, dir: &Path) -> Result<Vec<Entry>> {
         let dir = self.abs(dir);
         let conn = self.sftp();
-        let items = conn.sftp.readdir(&dir).with_context(|| self.ctx("list", &dir))?;
-        Ok(items.into_iter().map(|(path, st)| self.entry(&conn.sftp, super::file_name(&path), &path, st)).collect())
+        let items = conn
+            .sftp
+            .readdir(&dir)
+            .with_context(|| self.ctx("list", &dir))?;
+        Ok(items
+            .into_iter()
+            .map(|(path, st)| self.entry(&conn.sftp, super::file_name(&path), &path, st))
+            .collect())
     }
 
     fn stat(&self, path: &Path) -> Result<Entry> {
@@ -268,37 +316,56 @@ impl Backend for SftpFs {
         let p = self.abs(path);
         match self.sftp().sftp.lstat(&p) {
             Ok(_) => Ok(true),
-            Err(e) if matches!(e.code(), ErrorCode::SFTP(FX_NO_SUCH_FILE | FX_NO_SUCH_PATH)) => Ok(false),
+            Err(e) if matches!(e.code(), ErrorCode::SFTP(FX_NO_SUCH_FILE | FX_NO_SUCH_PATH)) => {
+                Ok(false)
+            }
             Err(e) => Err(e).with_context(|| self.ctx("stat", &p)),
         }
     }
 
     fn open_read(&self, path: &Path) -> Result<Box<dyn Read + Send>> {
         let p = self.abs(path);
-        let f = self.sftp().sftp.open(&p).with_context(|| self.ctx("open", &p))?;
+        let f = self
+            .sftp()
+            .sftp
+            .open(&p)
+            .with_context(|| self.ctx("open", &p))?;
         Ok(Box::new(BufReader::with_capacity(IO_BUF, f)))
     }
 
     fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
         let p = self.abs(path);
         let flags = OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE;
-        let f = self.sftp().sftp.open_mode(&p, flags, 0o644, OpenType::File).with_context(|| self.ctx("create", &p))?;
+        let f = self
+            .sftp()
+            .sftp
+            .open_mode(&p, flags, 0o644, OpenType::File)
+            .with_context(|| self.ctx("create", &p))?;
         Ok(Box::new(BufWriter::with_capacity(IO_BUF, f)))
     }
 
     fn mkdir(&self, path: &Path) -> Result<()> {
         let p = self.abs(path);
-        self.sftp().sftp.mkdir(&p, 0o755).with_context(|| self.ctx("mkdir", &p))
+        self.sftp()
+            .sftp
+            .mkdir(&p, 0o755)
+            .with_context(|| self.ctx("mkdir", &p))
     }
 
     fn remove_file(&self, path: &Path) -> Result<()> {
         let p = self.abs(path);
-        self.sftp().sftp.unlink(&p).with_context(|| self.ctx("remove", &p))
+        self.sftp()
+            .sftp
+            .unlink(&p)
+            .with_context(|| self.ctx("remove", &p))
     }
 
     fn remove_dir(&self, path: &Path) -> Result<()> {
         let p = self.abs(path);
-        self.sftp().sftp.rmdir(&p).with_context(|| self.ctx("rmdir", &p))
+        self.sftp()
+            .sftp
+            .rmdir(&p)
+            .with_context(|| self.ctx("rmdir", &p))
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -309,26 +376,59 @@ impl Backend for SftpFs {
         self.sftp()
             .sftp
             .rename(&f, &t, Some(flags))
-            .with_context(|| format!("rename {}:{} -> {}", self.dest.alias, f.display(), t.display()))
+            .with_context(|| {
+                format!(
+                    "rename {}:{} -> {}",
+                    self.dest.alias,
+                    f.display(),
+                    t.display()
+                )
+            })
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> Result<()> {
         let p = self.abs(path);
-        let st = ssh2::FileStat { perm: Some(mode & 0o7777), ..blank_stat() };
-        self.sftp().sftp.setstat(&p, st).with_context(|| self.ctx("chmod", &p))
+        let st = ssh2::FileStat {
+            perm: Some(mode & 0o7777),
+            ..blank_stat()
+        };
+        self.sftp()
+            .sftp
+            .setstat(&p, st)
+            .with_context(|| self.ctx("chmod", &p))
     }
 
     fn set_mtime(&self, path: &Path, mtime: SystemTime) -> Result<()> {
         let p = self.abs(path);
         let conn = self.sftp();
-        let secs = mtime.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let secs = mtime
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         // SFTP sets atime and mtime together; keep the current atime.
-        let atime = conn.sftp.stat(&p).ok().and_then(|s| s.atime).unwrap_or(secs);
-        let st = ssh2::FileStat { atime: Some(atime), mtime: Some(secs), ..blank_stat() };
-        conn.sftp.setstat(&p, st).with_context(|| self.ctx("set mtime", &p))
+        let atime = conn
+            .sftp
+            .stat(&p)
+            .ok()
+            .and_then(|s| s.atime)
+            .unwrap_or(secs);
+        let st = ssh2::FileStat {
+            atime: Some(atime),
+            mtime: Some(secs),
+            ..blank_stat()
+        };
+        conn.sftp
+            .setstat(&p, st)
+            .with_context(|| self.ctx("set mtime", &p))
     }
 
-    fn walk_files(&self, root: &Path, opts: WalkOpts, emit: Emit, cancel: &AtomicBool) -> Result<()> {
+    fn walk_files(
+        &self,
+        root: &Path,
+        opts: WalkOpts,
+        emit: Emit,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
         let root = self.abs(root);
         let tools = self.tools();
         let root_s = root.to_string_lossy();
@@ -359,20 +459,32 @@ impl Backend for SftpFs {
                 });
             })?
         } else if tools.grep {
-            self.exec(&grep_script(&root_s, q, tools.grep_pcre), cancel, &mut |b| {
-                buf.extend_from_slice(b);
-                drain_grep_records(&mut buf, |path, line_no, text| {
-                    let mut ranges = Vec::new();
-                    let _ = matcher.find_iter(text.as_bytes(), |m| {
-                        ranges.push(m.start()..m.end());
-                        true
+            self.exec(
+                &grep_script(&root_s, q, tools.grep_pcre),
+                cancel,
+                &mut |b| {
+                    buf.extend_from_slice(b);
+                    drain_grep_records(&mut buf, |path, line_no, text| {
+                        let mut ranges = Vec::new();
+                        let _ = matcher.find_iter(text.as_bytes(), |m| {
+                            ranges.push(m.start()..m.end());
+                            true
+                        });
+                        let (line, ranges) = clip_hit(text, ranges);
+                        emit(SearchEvent::Match {
+                            path: strip_dot(path),
+                            line_no,
+                            line,
+                            ranges,
+                        });
                     });
-                    let (line, ranges) = clip_hit(text, ranges);
-                    emit(SearchEvent::Match { path: strip_dot(path), line_no, line, ranges });
-                });
-            })?
+                },
+            )?
         } else {
-            bail!("grep {}: neither rg nor grep is available on the host", self.dest.alias);
+            bail!(
+                "grep {}: neither rg nor grep is available on the host",
+                self.dest.alias
+            );
         };
         check_status(status, &self.ctx("grep", &root))
     }
@@ -393,12 +505,18 @@ fn resolve(t: &RemoteTarget, opts: &ConnectOpts) -> Dest {
     let params = dirs::home_dir()
         .and_then(|h| fs::File::open(h.join(".ssh/config")).ok())
         .and_then(|f| {
-            let rules = ssh2_config::ParseRule::ALLOW_UNKNOWN_FIELDS | ssh2_config::ParseRule::ALLOW_UNSUPPORTED_FIELDS;
-            ssh2_config::SshConfig::default().parse(&mut BufReader::new(f), rules).ok()
+            let rules = ssh2_config::ParseRule::ALLOW_UNKNOWN_FIELDS
+                | ssh2_config::ParseRule::ALLOW_UNSUPPORTED_FIELDS;
+            ssh2_config::SshConfig::default()
+                .parse(&mut BufReader::new(f), rules)
+                .ok()
         })
         .map(|c| c.query(&t.host));
     let p = params.as_ref();
-    let host = p.and_then(|p| p.host_name.clone()).map(|h| h.replace("%h", &t.host)).unwrap_or(t.host.clone());
+    let host = p
+        .and_then(|p| p.host_name.clone())
+        .map(|h| h.replace("%h", &t.host))
+        .unwrap_or(t.host.clone());
     let user = t
         .user
         .clone()
@@ -412,7 +530,11 @@ fn resolve(t: &RemoteTarget, opts: &ConnectOpts) -> Dest {
         port: t.port.or_else(|| p.and_then(|p| p.port)).unwrap_or(22),
         user,
         cfg_keys: p.and_then(|p| p.identity_file.clone()).unwrap_or_default(),
-        jump: opts.jump.clone().or_else(|| p.and_then(|p| p.proxy_jump.as_ref()).map(|j| j.join(","))).and_then(|j| jump::hops(&j)),
+        jump: opts
+            .jump
+            .clone()
+            .or_else(|| p.and_then(|p| p.proxy_jump.as_ref()).map(|j| j.join(",")))
+            .and_then(|j| jump::hops(&j)),
     }
 }
 
@@ -420,7 +542,11 @@ fn resolve(t: &RemoteTarget, opts: &ConnectOpts) -> Dest {
 fn known_hosts_path() -> PathBuf {
     std::env::var_os("RCP_KNOWN_HOSTS")
         .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".ssh/known_hosts"))
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".ssh/known_hosts")
+        })
 }
 
 enum HostCheck<'a> {
@@ -431,7 +557,9 @@ enum HostCheck<'a> {
 }
 
 fn connect_tcp(d: &Dest) -> Result<TcpStream> {
-    let addrs = (d.host.as_str(), d.port).to_socket_addrs().with_context(|| format!("resolve {}", d.host))?;
+    let addrs = (d.host.as_str(), d.port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve {}", d.host))?;
     let mut tcp = Err(io::Error::new(io::ErrorKind::NotFound, "no addresses"));
     for a in addrs {
         tcp = TcpStream::connect_timeout(&a, Duration::from_secs(10));
@@ -449,7 +577,11 @@ fn connect_tcp(d: &Dest) -> Result<TcpStream> {
 fn open_session(d: &Dest, jump: Option<&Jump>, check: HostCheck) -> Result<(Session, Vec<u8>)> {
     let mut sess = Session::new()?;
     match jump {
-        Some(j) => sess.set_tcp_stream(j.tunnel(&d.host, d.port, matches!(check, HostCheck::KnownHosts(_)))?),
+        Some(j) => sess.set_tcp_stream(j.tunnel(
+            &d.host,
+            d.port,
+            matches!(check, HostCheck::KnownHosts(_)),
+        )?),
         None => sess.set_tcp_stream(connect_tcp(d)?),
     }
     sess.set_timeout(30_000);
@@ -468,22 +600,39 @@ fn open_session(d: &Dest, jump: Option<&Jump>, check: HostCheck) -> Result<(Sess
         let supported = sess.supported_algs(MethodType::HostKey)?;
         let mut pref: Vec<&str> = Vec::new();
         for t in &known {
-            let algs: &[&str] = if t == "ssh-rsa" { &["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"] } else { &[t] };
+            let algs: &[&str] = if t == "ssh-rsa" {
+                &["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"]
+            } else {
+                &[t]
+            };
             pref.extend(algs.iter().filter(|a| supported.contains(a)));
         }
-        let rest: Vec<&str> = supported.iter().copied().filter(|a| !pref.contains(a)).collect();
+        let rest: Vec<&str> = supported
+            .iter()
+            .copied()
+            .filter(|a| !pref.contains(a))
+            .collect();
         pref.extend(rest);
         let _ = sess.method_pref(MethodType::HostKey, &pref.join(","));
     }
     sess.handshake().with_context(|| {
-        let via = d.jump.as_ref().map(|j| format!(" via {}", j.join(","))).unwrap_or_default();
+        let via = d
+            .jump
+            .as_ref()
+            .map(|j| format!(" via {}", j.join(",")))
+            .unwrap_or_default();
         format!("ssh handshake with {}:{}{via}", d.host, d.port)
     })?;
-    let (key, _) = sess.host_key().ok_or_else(|| anyhow!("{}: no host key", d.host))?;
+    let (key, _) = sess
+        .host_key()
+        .ok_or_else(|| anyhow!("{}: no host key", d.host))?;
     let key = key.to_vec();
     match check {
         HostCheck::Pinned(k) if k == key.as_slice() => {}
-        HostCheck::Pinned(_) => bail!("host key for {} changed since connecting; refusing to reconnect", d.host),
+        HostCheck::Pinned(_) => bail!(
+            "host key for {} changed since connecting; refusing to reconnect",
+            d.host
+        ),
         HostCheck::KnownHosts(path) => verify_host(&sess, &kh_lines, path, d, &key)?,
     }
     Ok((sess, key))
@@ -491,17 +640,29 @@ fn open_session(d: &Dest, jump: Option<&Jump>, check: HostCheck) -> Result<(Sess
 
 /// Host spec as written in known_hosts.
 fn host_spec(host: &str, port: u16) -> String {
-    if port == 22 { host.to_string() } else { format!("[{host}]:{port}") }
+    if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    }
 }
 
 /// Usable known_hosts lines (markers like @revoked are skipped).
 fn kh_entries(text: &str) -> impl Iterator<Item = &str> {
-    text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('@'))
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('@'))
 }
 
 /// Checks one line at a time so a single unparsable line (e.g. a key type
 /// libssh2 doesn't know) can't break the whole file.
-fn check_line(sess: &Session, line: &str, host: &str, port: u16, key: &[u8]) -> Option<CheckResult> {
+fn check_line(
+    sess: &Session,
+    line: &str,
+    host: &str,
+    port: u16,
+    key: &[u8],
+) -> Option<CheckResult> {
     let mut kh = sess.known_hosts().ok()?;
     kh.read_str(line, KnownHostFileKind::OpenSSH).ok()?;
     Some(kh.check_port(host, port, key))
@@ -528,11 +689,18 @@ fn verify_host(sess: &Session, kh: &str, path: &Path, d: &Dest, key: &[u8]) -> R
     for line in kh_entries(kh) {
         match check_line(sess, line, &d.host, d.port, key) {
             Some(CheckResult::Match) => return Ok(()),
-            Some(CheckResult::Mismatch) if line.split_whitespace().nth(1) == Some(ktype.as_str()) => changed = true,
+            Some(CheckResult::Mismatch)
+                if line.split_whitespace().nth(1) == Some(ktype.as_str()) =>
+            {
+                changed = true
+            }
             _ => {}
         }
     }
-    let fp = sess.host_key_hash(HashType::Sha256).map(|h| b64_encode(h, false)).unwrap_or_default();
+    let fp = sess
+        .host_key_hash(HashType::Sha256)
+        .map(|h| b64_encode(h, false))
+        .unwrap_or_default();
     let spec = host_spec(&d.host, d.port);
     if changed {
         bail!(
@@ -566,7 +734,9 @@ fn append_known_host(path: &Path, spec: &str, ktype: &str, key: &[u8]) -> Result
             fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
         }
     }
-    let needs_nl = fs::read(path).map(|b| b.last().is_some_and(|&c| c != b'\n')).unwrap_or(false);
+    let needs_nl = fs::read(path)
+        .map(|b| b.last().is_some_and(|&c| c != b'\n'))
+        .unwrap_or(false);
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     let nl = if needs_nl { "\n" } else { "" };
     writeln!(f, "{nl}{spec} {ktype} {}", b64_encode(key, true))?;
@@ -575,8 +745,13 @@ fn append_known_host(path: &Path, spec: &str, ktype: &str, key: &[u8]) -> Result
 
 /// The key type name is the first string in an SSH public key blob.
 fn key_type(blob: &[u8]) -> String {
-    let n = blob.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize).unwrap_or(0);
-    blob.get(4..4 + n).map(|t| String::from_utf8_lossy(t).into_owned()).unwrap_or_else(|| "unknown".into())
+    let n = blob
+        .get(..4)
+        .map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize)
+        .unwrap_or(0);
+    blob.get(4..4 + n)
+        .map(|t| String::from_utf8_lossy(t).into_owned())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn sftp_conn(sess: Session) -> Result<Conn> {
@@ -593,26 +768,39 @@ struct Kbd {
 }
 
 impl KeyboardInteractivePrompt for Kbd {
-    fn prompt<'a>(&mut self, _user: &str, instructions: &str, prompts: &[Prompt<'a>]) -> Vec<String> {
+    fn prompt<'a>(
+        &mut self,
+        _user: &str,
+        instructions: &str,
+        prompts: &[Prompt<'a>],
+    ) -> Vec<String> {
         if let Some(a) = &self.answer {
             return prompts.iter().map(|_| a.clone()).collect();
         }
         if !instructions.is_empty() {
             eprintln!("{instructions}");
         }
-        let answers: Vec<String> =
-            prompts.iter().map(|p| rpassword::prompt_password(p.text.as_ref()).unwrap_or_default()).collect();
+        let answers: Vec<String> = prompts
+            .iter()
+            .map(|p| rpassword::prompt_password(p.text.as_ref()).unwrap_or_default())
+            .collect();
         self.answer = answers.first().cloned();
         answers
     }
 }
 
 fn try_agent(sess: &Session, user: &str) -> bool {
-    let Ok(mut agent) = sess.agent() else { return false };
+    let Ok(mut agent) = sess.agent() else {
+        return false;
+    };
     if agent.connect().is_err() || agent.list_identities().is_err() {
         return false;
     }
-    let ok = agent.identities().unwrap_or_default().iter().any(|id| agent.userauth(user, id).is_ok());
+    let ok = agent
+        .identities()
+        .unwrap_or_default()
+        .iter()
+        .any(|id| agent.userauth(user, id).is_ok());
     let _ = agent.disconnect();
     ok
 }
@@ -620,7 +808,8 @@ fn try_agent(sess: &Session, user: &str) -> bool {
 fn try_key(sess: &Session, user: &str, key: &Path, passphrase: Option<&str>) -> bool {
     let pubkey = PathBuf::from(format!("{}.pub", key.display()));
     let pubkey = pubkey.exists().then_some(pubkey);
-    sess.userauth_pubkey_file(user, pubkey.as_deref(), key, passphrase).is_ok()
+    sess.userauth_pubkey_file(user, pubkey.as_deref(), key, passphrase)
+        .is_ok()
 }
 
 fn authenticate(sess: &Session, d: &Dest, opts: &ConnectOpts) -> Result<Cred> {
@@ -635,9 +824,17 @@ fn authenticate(sess: &Session, d: &Dest, opts: &ConnectOpts) -> Result<Cred> {
             return Ok(Cred::Agent);
         }
         let home = dirs::home_dir().unwrap_or_default();
-        let mut keys: Vec<PathBuf> = opts.identity.iter().map(|p| crate::cli::expand_tilde(p)).collect();
+        let mut keys: Vec<PathBuf> = opts
+            .identity
+            .iter()
+            .map(|p| crate::cli::expand_tilde(p))
+            .collect();
         keys.extend(d.cfg_keys.iter().cloned());
-        keys.extend(["id_ed25519", "id_ecdsa", "id_rsa"].iter().map(|k| home.join(".ssh").join(k)));
+        keys.extend(
+            ["id_ed25519", "id_ecdsa", "id_rsa"]
+                .iter()
+                .map(|k| home.join(".ssh").join(k)),
+        );
         let mut seen = Vec::new();
         for key in keys {
             if seen.contains(&key) || !key.is_file() {
@@ -645,18 +842,27 @@ fn authenticate(sess: &Session, d: &Dest, opts: &ConnectOpts) -> Result<Cred> {
             }
             seen.push(key.clone());
             if try_key(sess, user, &key, None) {
-                return Ok(Cred::Key { path: key, passphrase: None });
+                return Ok(Cred::Key {
+                    path: key,
+                    passphrase: None,
+                });
             }
             if !key_is_encrypted(&key) {
                 continue;
             }
             for _ in 0..3 {
-                let pp = rpassword::prompt_password(format!("Enter passphrase for key '{}': ", key.display()))?;
+                let pp = rpassword::prompt_password(format!(
+                    "Enter passphrase for key '{}': ",
+                    key.display()
+                ))?;
                 if pp.is_empty() {
                     break;
                 }
                 if try_key(sess, user, &key, Some(&pp)) {
-                    return Ok(Cred::Key { path: key, passphrase: Some(pp) });
+                    return Ok(Cred::Key {
+                        path: key,
+                        passphrase: Some(pp),
+                    });
                 }
             }
         }
@@ -677,7 +883,10 @@ fn authenticate(sess: &Session, d: &Dest, opts: &ConnectOpts) -> Result<Cred> {
         }
         eprintln!("Permission denied, please try again.");
     }
-    bail!("authentication failed for {user}@{} (tried: {methods})", d.host)
+    bail!(
+        "authentication failed for {user}@{} (tried: {methods})",
+        d.host
+    )
 }
 
 /// Repeats a successful login without prompting.
@@ -687,7 +896,14 @@ fn reauth(sess: &Session, user: &str, cred: &Cred) -> Result<()> {
         Cred::Agent => try_agent(sess, user),
         Cred::Key { path, passphrase } => try_key(sess, user, path, passphrase.as_deref()),
         Cred::Password(pw) => sess.userauth_password(user, pw).is_ok(),
-        Cred::Keyboard(a) => sess.userauth_keyboard_interactive(user, &mut Kbd { answer: Some(a.clone()) }).is_ok(),
+        Cred::Keyboard(a) => sess
+            .userauth_keyboard_interactive(
+                user,
+                &mut Kbd {
+                    answer: Some(a.clone()),
+                },
+            )
+            .is_ok(),
     };
     if !ok || !sess.authenticated() {
         bail!("re-authentication as {user} failed");
@@ -697,21 +913,37 @@ fn reauth(sess: &Session, user: &str, cred: &Cred) -> Result<()> {
 
 /// PEM keys say ENCRYPTED; OpenSSH-format keys name a cipher other than "none".
 fn key_is_encrypted(path: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(path) else { return false };
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
     if text.contains("ENCRYPTED") {
         return true;
     }
     let body: String = text.lines().filter(|l| !l.starts_with("-----")).collect();
-    let Some(blob) = b64_decode(&body) else { return false };
-    let Some(rest) = blob.strip_prefix(b"openssh-key-v1\0") else { return false };
-    let n = rest.get(..4).map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize).unwrap_or(0);
+    let Some(blob) = b64_decode(&body) else {
+        return false;
+    };
+    let Some(rest) = blob.strip_prefix(b"openssh-key-v1\0") else {
+        return false;
+    };
+    let n = rest
+        .get(..4)
+        .map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize)
+        .unwrap_or(0);
     rest.get(4..4 + n).is_some_and(|c| c != b"none")
 }
 
 // ---- helpers ---------------------------------------------------------------
 
 fn blank_stat() -> ssh2::FileStat {
-    ssh2::FileStat { size: None, uid: None, gid: None, perm: None, atime: None, mtime: None }
+    ssh2::FileStat {
+        size: None,
+        uid: None,
+        gid: None,
+        perm: None,
+        atime: None,
+        mtime: None,
+    }
 }
 
 fn entry_from(name: String, is_symlink: bool, st: &ssh2::FileStat) -> Entry {
@@ -744,10 +976,18 @@ impl std::fmt::Display for ExecStartError {
 impl std::error::Error for ExecStartError {}
 
 fn is_timeout(e: &io::Error) -> bool {
-    matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)
+    matches!(
+        e.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    )
 }
 
-fn run_exec(sess: &Session, script: &str, cancel: &AtomicBool, sink: &mut dyn FnMut(&[u8])) -> Result<Option<i32>> {
+fn run_exec(
+    sess: &Session,
+    script: &str,
+    cancel: &AtomicBool,
+    sink: &mut dyn FnMut(&[u8]),
+) -> Result<Option<i32>> {
     sess.set_timeout(15_000);
     let start = || -> Result<ssh2::Channel, ssh2::Error> {
         let mut ch = sess.channel_session()?;
@@ -811,7 +1051,9 @@ fn drain_records(buf: &mut Vec<u8>, sep: u8, mut f: impl FnMut(&[u8])) {
 fn drain_grep_records(buf: &mut Vec<u8>, mut f: impl FnMut(&str, u64, &str)) {
     let mut start = 0;
     while let Some(z) = buf[start..].iter().position(|&b| b == 0) {
-        let Some(nl) = buf[start + z..].iter().position(|&b| b == b'\n') else { break };
+        let Some(nl) = buf[start + z..].iter().position(|&b| b == b'\n') else {
+            break;
+        };
         let path = String::from_utf8_lossy(&buf[start..start + z]);
         let rest = String::from_utf8_lossy(&buf[start + z + 1..start + z + nl]);
         if let Some((n, text)) = rest.split_once(':')
@@ -853,12 +1095,21 @@ fn parse_rg_line(line: &[u8]) -> Option<SearchEvent> {
             a.iter()
                 .filter_map(|m| Some(m["start"].as_u64()? as usize..m["end"].as_u64()? as usize))
                 // Lossy decoding can shift offsets; drop ranges that no longer fit.
-                .filter(|r| r.end <= text.len() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end))
+                .filter(|r| {
+                    r.end <= text.len()
+                        && text.is_char_boundary(r.start)
+                        && text.is_char_boundary(r.end)
+                })
                 .collect()
         })
         .unwrap_or_default();
     let (line, ranges) = clip_hit(&text, ranges);
-    Some(SearchEvent::Match { path: strip_dot(&path), line_no, line, ranges })
+    Some(SearchEvent::Match {
+        path: strip_dot(&path),
+        line_no,
+        line,
+        ranges,
+    })
 }
 
 fn build_matcher(q: &GrepQuery) -> Result<RegexMatcher> {
@@ -883,12 +1134,18 @@ const DETECT_SCRIPT: &str = "echo rcp-ok; \
     exit 0";
 
 fn parse_version(s: &str) -> (u32, u32) {
-    let mut it = s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).map(|p| p.parse().unwrap_or(0));
+    let mut it = s
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse().unwrap_or(0));
     (it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
 fn parse_tools(out: &str) -> Tools {
-    let mut t = Tools { sh: out.lines().any(|l| l == "rcp-ok"), ..Default::default() };
+    let mut t = Tools {
+        sh: out.lines().any(|l| l == "rcp-ok"),
+        ..Default::default()
+    };
     for l in out.lines() {
         let mut parts = l.splitn(3, ' ');
         if parts.next() != Some("tool") {
@@ -898,7 +1155,9 @@ fn parse_tools(out: &str) -> Tools {
         let ver = parts.next().unwrap_or("");
         match name {
             // Some distros ship an unrelated `fd`; the real one says "fd x.y".
-            "fd" | "fdfind" if t.fd.is_none() && matches!(ver.split(' ').next(), Some("fd" | "fdfind")) => {
+            "fd" | "fdfind"
+                if t.fd.is_none() && matches!(ver.split(' ').next(), Some("fd" | "fdfind")) =>
+            {
                 t.fd = Some((name.to_string(), parse_version(ver)))
             }
             "rg" if ver.starts_with("ripgrep") => t.rg = Some(parse_version(ver)),
@@ -929,7 +1188,11 @@ fn fd_script(fd: &str, ver: (u32, u32), root: &str, o: WalkOpts) -> String {
 }
 
 fn find_script(root: &str, o: WalkOpts) -> String {
-    let prune = if o.hidden { "-name .git -prune" } else { "-name '.*' ! -name . -prune" };
+    let prune = if o.hidden {
+        "-name .git -prune"
+    } else {
+        "-name '.*' ! -name . -prune"
+    };
     cd_root(root) + "exec find . " + prune + " -o -type f -print0 2>/dev/null"
 }
 
@@ -1016,7 +1279,9 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 fn b64_encode(data: &[u8], pad: bool) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for c in data.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
         for i in 0..=c.len() {
             out.push(B64[(n >> (18 - 6 * i) & 63) as usize] as char);
         }
@@ -1062,7 +1327,12 @@ mod tests {
     fn rg_json_lines() {
         let line = br#"{"type":"match","data":{"path":{"text":"./src/a:b.rs"},"lines":{"text":"let x = \"it's\";\n"},"line_number":7,"absolute_offset":10,"submatches":[{"match":{"text":"it's"},"start":9,"end":13}]}}"#;
         match parse_rg_line(line) {
-            Some(SearchEvent::Match { path, line_no, line, ranges }) => {
+            Some(SearchEvent::Match {
+                path,
+                line_no,
+                line,
+                ranges,
+            }) => {
                 assert_eq!(path, "src/a:b.rs");
                 assert_eq!(line_no, 7);
                 assert_eq!(line, "let x = \"it's\";");
@@ -1077,7 +1347,9 @@ mod tests {
             b64_encode(b"abc\xff\n", true)
         );
         match parse_rg_line(line.as_bytes()) {
-            Some(SearchEvent::Match { path, line, ranges, .. }) => {
+            Some(SearchEvent::Match {
+                path, line, ranges, ..
+            }) => {
                 assert_eq!(path, "x\u{fffd}");
                 assert_eq!(&line[ranges[0].clone()], "abc");
             }
@@ -1092,12 +1364,22 @@ mod tests {
     fn grep_null_output() {
         let mut buf = b"./dir/a:b.txt\x0012:x: y\nsrc/m.rs\x003:fn main\nsrc/par".to_vec();
         let mut got = Vec::new();
-        drain_grep_records(&mut buf, |p, n, t| got.push((strip_dot(p), n, t.to_string())));
-        assert_eq!(got, vec![("dir/a:b.txt".into(), 12, "x: y".into()), ("src/m.rs".into(), 3, "fn main".into())]);
+        drain_grep_records(&mut buf, |p, n, t| {
+            got.push((strip_dot(p), n, t.to_string()))
+        });
+        assert_eq!(
+            got,
+            vec![
+                ("dir/a:b.txt".into(), 12, "x: y".into()),
+                ("src/m.rs".into(), 3, "fn main".into())
+            ]
+        );
         assert_eq!(buf, b"src/par");
         buf.extend_from_slice(b"tial\x001:z\n");
         got.clear();
-        drain_grep_records(&mut buf, |p, n, t| got.push((p.to_string(), n, t.to_string())));
+        drain_grep_records(&mut buf, |p, n, t| {
+            got.push((p.to_string(), n, t.to_string()))
+        });
         assert_eq!(got, vec![("src/partial".into(), 1, "z".into())]);
         assert!(buf.is_empty());
     }
@@ -1106,22 +1388,36 @@ mod tests {
     fn nul_records() {
         let mut buf = b"./a\0b/c\0d".to_vec();
         let mut got = Vec::new();
-        drain_records(&mut buf, 0, |r| got.push(strip_dot(&String::from_utf8_lossy(r))));
+        drain_records(&mut buf, 0, |r| {
+            got.push(strip_dot(&String::from_utf8_lossy(r)))
+        });
         assert_eq!(got, vec!["a", "b/c"]);
         assert_eq!(buf, b"d");
     }
 
     /// Runs a script through `sh -c '<quoted>'` locally, as exec would.
     fn sh(script: &str) -> String {
-        let out = std::process::Command::new("sh").arg("-c").arg(format!("sh -c {}", quote(script))).output().unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("sh -c {}", quote(script)))
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     #[test]
     fn quoting_survives_the_shell() {
-        let q = GrepQuery { pattern: r#"it's a "test" $HOME `x` \n"#.into(), ..Default::default() };
+        let q = GrepQuery {
+            pattern: r#"it's a "test" $HOME `x` \n"#.into(),
+            ..Default::default()
+        };
         let s = rg_script("/tmp/dir with 'quote", &q, (14, 1));
-        assert!(s.starts_with(r#"cd -- '/tmp/dir with '\''quote' 2>/dev/null || exit 99; exec rg --json"#), "{s}");
+        assert!(
+            s.starts_with(
+                r#"cd -- '/tmp/dir with '\''quote' 2>/dev/null || exit 99; exec rg --json"#
+            ),
+            "{s}"
+        );
         // printf stands in for rg: the pattern must arrive as one literal arg.
         let echo = format!("printf '%s\\n' {}", quote(&q.pattern));
         assert_eq!(sh(&echo), format!("{}\n", q.pattern));
@@ -1149,7 +1445,13 @@ mod tests {
              --include='*.rs' --exclude-dir=target --exclude='*.min.js' --exclude='.[!/]*' --exclude-dir='.[!/]*' \
              -e 'Foo bar' . 2>/dev/null"
         );
-        let q = GrepQuery { pattern: "a|b".into(), regex: true, hidden: true, globs: vec![], ..q };
+        let q = GrepQuery {
+            pattern: "a|b".into(),
+            regex: true,
+            hidden: true,
+            globs: vec![],
+            ..q
+        };
         assert_eq!(
             grep_script("/r", &q, false),
             "cd -- /r 2>/dev/null || exit 99; exec grep -rnI --null --color=never -E -i -w --exclude-dir=.git \
@@ -1159,18 +1461,30 @@ mod tests {
 
     #[test]
     fn walk_commands() {
-        let o = WalkOpts { hidden: false, respect_ignore: true };
+        let o = WalkOpts {
+            hidden: false,
+            respect_ignore: true,
+        };
         assert_eq!(
             fd_script("fdfind", (8, 3), "/a b", o),
             "cd -- '/a b' 2>/dev/null || exit 99; exec fdfind --type f --color never -0 --exclude .git 2>/dev/null"
         );
-        let o = WalkOpts { hidden: true, respect_ignore: false };
+        let o = WalkOpts {
+            hidden: true,
+            respect_ignore: false,
+        };
         assert_eq!(
             fd_script("fd", (10, 0), "/a", o),
             "cd -- /a 2>/dev/null || exit 99; exec fd --type f --color never -0 --exclude .git --hidden --no-ignore 2>/dev/null"
         );
         assert_eq!(
-            find_script("/a", WalkOpts { hidden: false, respect_ignore: true }),
+            find_script(
+                "/a",
+                WalkOpts {
+                    hidden: false,
+                    respect_ignore: true
+                }
+            ),
             "cd -- /a 2>/dev/null || exit 99; exec find . -name '.*' ! -name . -prune -o -type f -print0 2>/dev/null"
         );
     }
@@ -1186,29 +1500,46 @@ mod tests {
         fs::write(p.join(".hid/h"), "it's x").unwrap();
         fs::write(p.join("s p/a:b"), "1\nit's x\n").unwrap();
         let root = p.to_str().unwrap();
-        let mut f: Vec<String> = sh(&find_script(root, WalkOpts::default())).split('\0').map(strip_dot).collect();
-        f.sort();
-        assert_eq!(f, vec!["", "s p/a:b"]);
-        let mut f: Vec<String> = sh(&find_script(root, WalkOpts { hidden: true, respect_ignore: false }))
+        let mut f: Vec<String> = sh(&find_script(root, WalkOpts::default()))
             .split('\0')
             .map(strip_dot)
             .collect();
         f.sort();
+        assert_eq!(f, vec!["", "s p/a:b"]);
+        let mut f: Vec<String> = sh(&find_script(
+            root,
+            WalkOpts {
+                hidden: true,
+                respect_ignore: false,
+            },
+        ))
+        .split('\0')
+        .map(strip_dot)
+        .collect();
+        f.sort();
         assert_eq!(f, vec!["", ".hid/h", "s p/a:b"]);
-        let q = GrepQuery { pattern: "it's".into(), ..Default::default() };
+        let q = GrepQuery {
+            pattern: "it's".into(),
+            ..Default::default()
+        };
         let mut buf = sh(&grep_script(root, &q, false)).into_bytes();
         let mut got = Vec::new();
-        drain_grep_records(&mut buf, |p, n, t| got.push((strip_dot(p), n, t.to_string())));
+        drain_grep_records(&mut buf, |p, n, t| {
+            got.push((strip_dot(p), n, t.to_string()))
+        });
         assert_eq!(got, vec![("s p/a:b".to_string(), 2, "it's x".to_string())]);
     }
 
     #[test]
     fn tools_parsing() {
-        let t = parse_tools("rcp-ok\ntool fd fd 10.3.0\ntool rg ripgrep 14.1.0 (rev abc)\ntool grep\n");
+        let t =
+            parse_tools("rcp-ok\ntool fd fd 10.3.0\ntool rg ripgrep 14.1.0 (rev abc)\ntool grep\n");
         assert!(t.sh && t.grep && !t.grep_pcre);
         assert_eq!(t.fd, Some(("fd".into(), (10, 3))));
         assert_eq!(t.rg, Some((14, 1)));
-        let t = parse_tools("rcp-ok\ntool fd fdclone 3.01\ntool fdfind fdfind 8.3.1\ntool grep\ntool grep-P\n");
+        let t = parse_tools(
+            "rcp-ok\ntool fd fdclone 3.01\ntool fdfind fdfind 8.3.1\ntool grep\ntool grep-P\n",
+        );
         assert_eq!(t.fd, Some(("fdfind".into(), (8, 3))));
         assert!(t.grep_pcre && t.rg.is_none());
         assert!(!parse_tools("").sh);
@@ -1225,7 +1556,10 @@ mod tests {
 
     fn connect_test() -> Option<SftpFs> {
         let spec = std::env::var("RCP_TEST_SSH").ok()?;
-        let (user, rest) = spec.split_once('@').map(|(u, r)| (Some(u.to_string()), r)).unwrap_or((None, &spec));
+        let (user, rest) = spec
+            .split_once('@')
+            .map(|(u, r)| (Some(u.to_string()), r))
+            .unwrap_or((None, &spec));
         let (host, port) = match rest.rsplit_once(':') {
             Some((h, p)) => (h.to_string(), p.parse().ok()),
             None => (rest.to_string(), None),
@@ -1279,7 +1613,10 @@ mod tests {
         fs.open_read(&f).unwrap().read_to_end(&mut back).unwrap();
         assert!(back == data, "roundtrip");
         let e = fs.stat(&f).unwrap();
-        assert_eq!((e.kind, e.size, e.is_symlink, e.name.as_str()), (Kind::File, 3_000_000, false, "big file.bin"));
+        assert_eq!(
+            (e.kind, e.size, e.is_symlink, e.name.as_str()),
+            (Kind::File, 3_000_000, false, "big file.bin")
+        );
         fs.set_mode(&f, 0o600).unwrap();
         assert_eq!(fs.stat(&f).unwrap().mode.unwrap() & 0o777, 0o600);
         let t = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
@@ -1311,7 +1648,10 @@ mod tests {
             (".git/HEAD", "copy_entry\n"),
             ("dir:colon/a:b.txt", "x\ncopy_entry here\n"),
         ] {
-            fs.open_write(&tree_root.join(p)).unwrap().write_all(c.as_bytes()).unwrap();
+            fs.open_write(&tree_root.join(p))
+                .unwrap()
+                .write_all(c.as_bytes())
+                .unwrap();
         }
         // ssh2 has no symlink on the Backend; make them via exec.
         let mut sink = |_: &[u8]| {};
@@ -1325,7 +1665,18 @@ mod tests {
         let get = |n: &str| list.iter().find(|e| e.name == n).unwrap().clone();
         let mut names: Vec<_> = list.iter().map(|e| e.name.clone()).collect();
         names.sort();
-        assert_eq!(names, vec![".git", ".hid", "dangling", "dir:colon", "dirlink", "link.rs", "src"]);
+        assert_eq!(
+            names,
+            vec![
+                ".git",
+                ".hid",
+                "dangling",
+                "dir:colon",
+                "dirlink",
+                "link.rs",
+                "src"
+            ]
+        );
         assert!(get("link.rs").is_symlink && get("link.rs").kind == Kind::File);
         assert!(get("dirlink").is_symlink && get("dirlink").is_dir());
         assert!(get("dangling").is_symlink && get("dangling").kind == Kind::Other);
@@ -1338,27 +1689,68 @@ mod tests {
         assert_eq!(fs.stat(rel).unwrap().kind, Kind::Dir);
 
         let expect_walk = vec!["dir:colon/a:b.txt", "src/main.rs", "src/sub/lib.rs"];
-        let expect_walk_hidden = vec![".hid/x.rs", "dir:colon/a:b.txt", "src/main.rs", "src/sub/lib.rs"];
-        let q = GrepQuery { pattern: "copy_entry".into(), regex: true, respect_ignore: true, ..Default::default() };
-        let qfix = GrepQuery { pattern: "(\"it's\")".into(), regex: false, ..q.clone() };
+        let expect_walk_hidden = vec![
+            ".hid/x.rs",
+            "dir:colon/a:b.txt",
+            "src/main.rs",
+            "src/sub/lib.rs",
+        ];
+        let q = GrepQuery {
+            pattern: "copy_entry".into(),
+            regex: true,
+            respect_ignore: true,
+            ..Default::default()
+        };
+        let qfix = GrepQuery {
+            pattern: "(\"it's\")".into(),
+            regex: false,
+            ..q.clone()
+        };
         let detected = fs.tools();
         eprintln!("detected tools: {detected:?}");
         let mut variants = vec![
             ("detected", detected.clone()),
-            ("find+grep", Tools { fd: None, rg: None, ..detected.clone() }),
-            ("grep -E", Tools { fd: None, rg: None, grep_pcre: false, ..detected.clone() }),
+            (
+                "find+grep",
+                Tools {
+                    fd: None,
+                    rg: None,
+                    ..detected.clone()
+                },
+            ),
+            (
+                "grep -E",
+                Tools {
+                    fd: None,
+                    rg: None,
+                    grep_pcre: false,
+                    ..detected.clone()
+                },
+            ),
             ("sftp only", Tools::default()),
         ];
         // fd is often outside sshd's default PATH; RCP_TEST_FD names it.
         if let Ok(fd) = std::env::var("RCP_TEST_FD") {
-            variants.push(("fd", Tools { fd: Some((fd, (10, 0))), ..detected.clone() }));
+            variants.push((
+                "fd",
+                Tools {
+                    fd: Some((fd, (10, 0))),
+                    ..detected.clone()
+                },
+            ));
         }
         for (name, tools) in variants {
             *fs.tools.lock().unwrap() = Some(tools.clone());
-            let o = WalkOpts { hidden: false, respect_ignore: true };
+            let o = WalkOpts {
+                hidden: false,
+                respect_ignore: true,
+            };
             let ev = collect(|e| fs.walk_files(&tree_root, o, e, &cancel).unwrap());
             assert_eq!(sorted_paths(&ev), expect_walk, "{name}");
-            let o = WalkOpts { hidden: true, respect_ignore: false };
+            let o = WalkOpts {
+                hidden: true,
+                respect_ignore: false,
+            };
             let ev = collect(|e| fs.walk_files(&tree_root, o, e, &cancel).unwrap());
             assert_eq!(sorted_paths(&ev), expect_walk_hidden, "{name}");
             if !tools.grep {
@@ -1367,32 +1759,68 @@ mod tests {
             }
             // Smart case: lowercase pattern also matches Copy_Entry.
             let ev = collect(|e| fs.grep(&tree_root, &q, e, &cancel).unwrap());
-            assert_eq!(sorted_paths(&ev), vec!["dir:colon/a:b.txt", "src/main.rs", "src/sub/lib.rs"], "{name}");
+            assert_eq!(
+                sorted_paths(&ev),
+                vec!["dir:colon/a:b.txt", "src/main.rs", "src/sub/lib.rs"],
+                "{name}"
+            );
             for e in &ev {
-                if let SearchEvent::Match { path, line_no, line, ranges } = e {
-                    assert_eq!(line[ranges[0].clone()].to_lowercase(), "copy_entry", "{name} {path}");
+                if let SearchEvent::Match {
+                    path,
+                    line_no,
+                    line,
+                    ranges,
+                } = e
+                {
+                    assert_eq!(
+                        line[ranges[0].clone()].to_lowercase(),
+                        "copy_entry",
+                        "{name} {path}"
+                    );
                     if path == "dir:colon/a:b.txt" {
                         assert_eq!(*line_no, 2);
                     }
                 }
             }
-            let qs = GrepQuery { case: CaseMode::Sensitive, hidden: true, ..q.clone() };
+            let qs = GrepQuery {
+                case: CaseMode::Sensitive,
+                hidden: true,
+                ..q.clone()
+            };
             let ev = collect(|e| fs.grep(&tree_root, &qs, e, &cancel).unwrap());
-            assert_eq!(sorted_paths(&ev), vec![".hid/x.rs", "dir:colon/a:b.txt", "src/main.rs"], "{name}");
+            assert_eq!(
+                sorted_paths(&ev),
+                vec![".hid/x.rs", "dir:colon/a:b.txt", "src/main.rs"],
+                "{name}"
+            );
             let ev = collect(|e| fs.grep(&tree_root, &qfix, e, &cancel).unwrap());
             assert_eq!(sorted_paths(&ev), vec!["src/main.rs"], "{name}");
-            let qg = GrepQuery { globs: vec!["!src/**".into()], ..q.clone() };
+            let qg = GrepQuery {
+                globs: vec!["!src/**".into()],
+                ..q.clone()
+            };
             let ev = collect(|e| fs.grep(&tree_root, &qg, e, &cancel).unwrap());
             assert_eq!(sorted_paths(&ev), vec!["dir:colon/a:b.txt"], "{name}");
-            assert!(fs.grep(&root.join("missing"), &q, &|_| {}, &cancel).is_err(), "{name}");
+            assert!(
+                fs.grep(&root.join("missing"), &q, &|_| {}, &cancel)
+                    .is_err(),
+                "{name}"
+            );
         }
         *fs.tools.lock().unwrap() = Some(detected);
 
         // Encrypted key with a stored passphrase, as reconnect would use it.
-        if let (Ok(key), Ok(pp)) = (std::env::var("RCP_TEST_SSH_ENC_KEY"), std::env::var("RCP_TEST_SSH_ENC_PASS")) {
+        if let (Ok(key), Ok(pp)) = (
+            std::env::var("RCP_TEST_SSH_ENC_KEY"),
+            std::env::var("RCP_TEST_SSH_ENC_PASS"),
+        ) {
             assert!(key_is_encrypted(Path::new(&key)));
-            let (sess, _) = open_session(&fs.dest, fs.jump.as_ref(), HostCheck::Pinned(&fs.host_key)).unwrap();
-            let cred = Cred::Key { path: key.into(), passphrase: Some(pp) };
+            let (sess, _) =
+                open_session(&fs.dest, fs.jump.as_ref(), HostCheck::Pinned(&fs.host_key)).unwrap();
+            let cred = Cred::Key {
+                path: key.into(),
+                passphrase: Some(pp),
+            };
             reauth(&sess, &fs.dest.user, &cred).unwrap();
         }
 
@@ -1452,7 +1880,11 @@ mod tests {
         fn rm(fs: &SftpFs, p: &Path) {
             for e in fs.list(p).unwrap() {
                 let c = p.join(&e.name);
-                if e.is_dir() && !e.is_symlink { rm(fs, &c) } else { fs.remove_file(&c).unwrap() }
+                if e.is_dir() && !e.is_symlink {
+                    rm(fs, &c)
+                } else {
+                    fs.remove_file(&c).unwrap()
+                }
             }
             fs.remove_dir(p).unwrap();
         }

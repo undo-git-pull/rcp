@@ -71,7 +71,11 @@ pub fn scan(b: &dyn Backend, path: &Path, cancel: &AtomicBool) -> Result<(u64, u
 
 /// `photo.jpg` -> `photo (1).jpg`, `dir` -> `dir (1)`, `.bashrc` -> `.bashrc (1)`.
 pub fn numbered_name(name: &str, n: u32, is_dir: bool) -> String {
-    let split = if is_dir { None } else { name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()) };
+    let split = if is_dir {
+        None
+    } else {
+        name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty())
+    };
     match split {
         Some((stem, ext)) => format!("{stem} ({n}).{ext}"),
         None => format!("{name} ({n})"),
@@ -134,12 +138,18 @@ impl Copier<'_> {
         }
     }
 
-    fn copy_entry(&mut self, src_path: &Path, dst_path: &Path, top: bool) -> Result<Option<String>> {
+    fn copy_entry(
+        &mut self,
+        src_path: &Path,
+        dst_path: &Path,
+        top: bool,
+    ) -> Result<Option<String>> {
         self.check_cancel()?;
         let e = self.src.stat(src_path)?;
         match e.kind {
             Kind::Dir if e.is_symlink => {
-                self.notes.push(format!("skipped directory symlink {}", src_path.display()));
+                self.notes
+                    .push(format!("skipped directory symlink {}", src_path.display()));
                 Ok(None)
             }
             Kind::Dir => {
@@ -196,7 +206,8 @@ impl Copier<'_> {
                 Ok(Some(fs::file_name(&dst_path)))
             }
             Kind::Other => {
-                self.notes.push(format!("skipped special file {}", src_path.display()));
+                self.notes
+                    .push(format!("skipped special file {}", src_path.display()));
                 Ok(None)
             }
         }
@@ -249,7 +260,12 @@ mod tests {
     use std::fs as stdfs;
     use std::os::unix::fs::PermissionsExt;
 
-    fn run(src: &Path, dst: &Path, answer: Resolution, cancel: &AtomicBool) -> (Result<Option<String>>, Vec<String>) {
+    fn run(
+        src: &Path,
+        dst: &Path,
+        answer: Resolution,
+        cancel: &AtomicBool,
+    ) -> (Result<Option<String>>, Vec<String>) {
         let mut progress = |_: u64, _: &str| {};
         let mut ask = |_: &Path, _: bool| answer;
         let mut c = Copier {
@@ -290,10 +306,20 @@ mod tests {
         assert_eq!(r.unwrap().as_deref(), Some("proj"));
         let out = d.path().join("proj");
         assert_eq!(stdfs::read_to_string(out.join("a/f.txt")).unwrap(), "hello");
-        assert_eq!(stdfs::metadata(out.join("a/f.txt")).unwrap().permissions().mode() & 0o777, 0o750);
+        assert_eq!(
+            stdfs::metadata(out.join("a/f.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o750
+        );
         assert!(out.join("a/empty").is_dir());
         // File symlinks are copied as content; directory symlinks skipped.
-        assert_eq!(stdfs::read_to_string(out.join("link.txt")).unwrap(), "hello");
+        assert_eq!(
+            stdfs::read_to_string(out.join("link.txt")).unwrap(),
+            "hello"
+        );
         assert!(!out.join("loop").exists());
         assert_eq!(notes.len(), 1);
     }
@@ -309,15 +335,24 @@ mod tests {
 
         let (r, _) = run(&src, d.path(), Resolution::Skip, &cancel);
         assert_eq!(r.unwrap(), None);
-        assert_eq!(stdfs::read_to_string(d.path().join("x.txt")).unwrap(), "old");
+        assert_eq!(
+            stdfs::read_to_string(d.path().join("x.txt")).unwrap(),
+            "old"
+        );
 
         let (r, _) = run(&src, d.path(), Resolution::Rename, &cancel);
         assert_eq!(r.unwrap().as_deref(), Some("x (1).txt"));
-        assert_eq!(stdfs::read_to_string(d.path().join("x (1).txt")).unwrap(), "new");
+        assert_eq!(
+            stdfs::read_to_string(d.path().join("x (1).txt")).unwrap(),
+            "new"
+        );
 
         let (r, _) = run(&src, d.path(), Resolution::Overwrite, &cancel);
         assert_eq!(r.unwrap().as_deref(), Some("x.txt"));
-        assert_eq!(stdfs::read_to_string(d.path().join("x.txt")).unwrap(), "new");
+        assert_eq!(
+            stdfs::read_to_string(d.path().join("x.txt")).unwrap(),
+            "new"
+        );
 
         let (r, _) = run(&src, d.path(), Resolution::Cancel, &cancel);
         assert!(is_cancelled(&r.unwrap_err()));

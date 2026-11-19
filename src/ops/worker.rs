@@ -37,10 +37,18 @@ pub fn spawn(tx: Sender<AppEvent>, cancel: Arc<AtomicBool>) -> Sender<Job> {
         for job in job_rx {
             cancel.store(false, Ordering::Relaxed);
             let ev = match job {
-                Job::Copy { src, dst, paths, dst_dir, dst_side } => {
-                    run_copy(&tx, &cancel, &*src, &*dst, &paths, &dst_dir, dst_side)
-                }
-                Job::Delete { backend, paths, side } => run_delete(&tx, &cancel, &*backend, &paths, side),
+                Job::Copy {
+                    src,
+                    dst,
+                    paths,
+                    dst_dir,
+                    dst_side,
+                } => run_copy(&tx, &cancel, &*src, &*dst, &paths, &dst_dir, dst_side),
+                Job::Delete {
+                    backend,
+                    paths,
+                    side,
+                } => run_delete(&tx, &cancel, &*backend, &paths, side),
             };
             if tx.send(AppEvent::Job(ev)).is_err() {
                 break;
@@ -51,7 +59,11 @@ pub fn spawn(tx: Sender<AppEvent>, cancel: Arc<AtomicBool>) -> Sender<Job> {
 }
 
 fn progress(tx: &Sender<AppEvent>, done_bytes: u64, total_bytes: u64, current: &str) {
-    let _ = tx.send(AppEvent::Job(JobEvent::Progress { done_bytes, total_bytes, current: current.into() }));
+    let _ = tx.send(AppEvent::Job(JobEvent::Progress {
+        done_bytes,
+        total_bytes,
+        current: current.into(),
+    }));
 }
 
 fn summarize_notes(mut msg: String, notes: &[String]) -> (String, bool) {
@@ -75,7 +87,9 @@ fn run_copy(
     for p in paths {
         match copy::scan(src, p, cancel) {
             Ok((bytes, _)) => total += bytes,
-            Err(e) if is_cancelled(&e) => return finished("Copy cancelled".into(), false, dst_side, None),
+            Err(e) if is_cancelled(&e) => {
+                return finished("Copy cancelled".into(), false, dst_side, None);
+            }
             Err(_) => {}
         }
     }
@@ -89,7 +103,11 @@ fn run_copy(
     };
     let mut ask = |path: &Path, is_dir: bool| {
         let (reply, rx) = channel();
-        let ev = JobEvent::Conflict { path: path.display().to_string(), is_dir, reply };
+        let ev = JobEvent::Conflict {
+            path: path.display().to_string(),
+            is_dir,
+            reply,
+        };
         if tx.send(AppEvent::Job(ev)).is_err() {
             return Resolution::Cancel;
         }
@@ -116,7 +134,8 @@ fn run_copy(
             }
             Ok(None) => {}
             Err(e) if is_cancelled(&e) => {
-                let (msg, err) = summarize_notes(format!("Copy cancelled after {copied} item(s)"), &c.notes);
+                let (msg, err) =
+                    summarize_notes(format!("Copy cancelled after {copied} item(s)"), &c.notes);
                 return finished(msg, err, dst_side, select);
             }
             Err(e) => c.notes.push(format!("{e:#}")),
@@ -132,7 +151,13 @@ fn run_copy(
     finished(msg, err, dst_side, select)
 }
 
-fn run_delete(tx: &Sender<AppEvent>, cancel: &AtomicBool, b: &dyn Backend, paths: &[PathBuf], side: Side) -> JobEvent {
+fn run_delete(
+    tx: &Sender<AppEvent>,
+    cancel: &AtomicBool,
+    b: &dyn Backend,
+    paths: &[PathBuf],
+    side: Side,
+) -> JobEvent {
     let mut removed = 0u64;
     let mut last = Instant::now() - PROGRESS_EVERY;
     let mut notes = vec![];
@@ -147,15 +172,33 @@ fn run_delete(tx: &Sender<AppEvent>, cancel: &AtomicBool, b: &dyn Backend, paths
         match delete::delete(b, p, cancel, &mut on_item) {
             Ok(()) => {}
             Err(e) if is_cancelled(&e) => {
-                return finished(format!("Delete cancelled after {removed} item(s)"), false, side, None);
+                return finished(
+                    format!("Delete cancelled after {removed} item(s)"),
+                    false,
+                    side,
+                    None,
+                );
             }
             Err(e) => notes.push(format!("{e:#}")),
         }
     }
-    let (msg, err) = summarize_notes(format!("Deleted {removed} item(s) from {}", b.label()), &notes);
+    let (msg, err) = summarize_notes(
+        format!("Deleted {removed} item(s) from {}", b.label()),
+        &notes,
+    );
     finished(msg, err, side, None)
 }
 
-fn finished(message: String, is_error: bool, side: Side, select: Option<(Side, String)>) -> JobEvent {
-    JobEvent::Finished { message, is_error, refresh: vec![side], select }
+fn finished(
+    message: String,
+    is_error: bool,
+    side: Side,
+    select: Option<(Side, String)>,
+) -> JobEvent {
+    JobEvent::Finished {
+        message,
+        is_error,
+        refresh: vec![side],
+        select,
+    }
 }

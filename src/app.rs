@@ -25,9 +25,24 @@ use crate::search::{self, Action, SearchModal};
 use crate::ui;
 
 pub enum Modal {
-    ConfirmDelete { side: Side, paths: Vec<PathBuf>, what: String, summary: Option<String>, id: u64 },
-    ConfirmCopy { side: Side, paths: Vec<PathBuf>, what: String, dest: String },
-    Conflict { path: String, is_dir: bool, reply: Sender<Resolution> },
+    ConfirmDelete {
+        side: Side,
+        paths: Vec<PathBuf>,
+        what: String,
+        summary: Option<String>,
+        id: u64,
+    },
+    ConfirmCopy {
+        side: Side,
+        paths: Vec<PathBuf>,
+        what: String,
+        dest: String,
+    },
+    Conflict {
+        path: String,
+        is_dir: bool,
+        reply: Sender<Resolution>,
+    },
     ConfirmQuit,
     ConfirmCancel,
     Help,
@@ -43,7 +58,13 @@ pub struct JobStatus {
 
 impl JobStatus {
     fn new(is_delete: bool) -> JobStatus {
-        JobStatus { done: 0, total: 0, current: String::new(), started: Instant::now(), is_delete }
+        JobStatus {
+            done: 0,
+            total: 0,
+            current: String::new(),
+            started: Instant::now(),
+            is_delete,
+        }
     }
 }
 
@@ -215,7 +236,11 @@ impl App {
         let (id, tx) = (self.preview_id, self.tx.clone());
         thread::spawn(move || {
             let preview = preview::load(&*backend, &path);
-            let _ = tx.send(AppEvent::Preview { target: PreviewTarget::Main, id, preview });
+            let _ = tx.send(AppEvent::Preview {
+                target: PreviewTarget::Main,
+                id,
+                preview,
+            });
         });
     }
 
@@ -250,7 +275,11 @@ impl App {
         let dirs: Vec<&str> = paths
             .iter()
             .filter(|p| p.parent() == Some(src.cwd.as_path()))
-            .filter_map(|p| src.items.iter().find(|e| e.name == fs::file_name(p) && e.is_dir()))
+            .filter_map(|p| {
+                src.items
+                    .iter()
+                    .find(|e| e.name == fs::file_name(p) && e.is_dir())
+            })
             .map(|e| e.name.as_str())
             .collect();
         if !dirs.is_empty() {
@@ -260,7 +289,12 @@ impl App {
                 (n, d) => format!("{n} items ({d} directories)"),
             };
             let dest = format!("{}:{}", dst.backend.label(), dst_dir.display());
-            self.modal = Some(Modal::ConfirmCopy { side: src_side, paths, what, dest });
+            self.modal = Some(Modal::ConfirmCopy {
+                side: src_side,
+                paths,
+                what,
+                dest,
+            });
             return;
         }
         self.submit_copy(src_side, paths);
@@ -299,7 +333,11 @@ impl App {
         let what = if paths.len() == 1 {
             let e = p.selected().filter(|_| p.marked.is_empty());
             let is_dir = e.is_some_and(|e| e.is_dir() && !e.is_symlink);
-            format!("{} \"{}\"", if is_dir { "directory" } else { "file" }, fs::file_name(&paths[0]))
+            format!(
+                "{} \"{}\"",
+                if is_dir { "directory" } else { "file" },
+                fs::file_name(&paths[0])
+            )
         } else {
             format!("{} marked items", paths.len())
         };
@@ -316,7 +354,10 @@ impl App {
                         total.bytes += s.bytes;
                     }
                     Err(e) => {
-                        let _ = tx.send(AppEvent::DeleteSummary { id, summary: format!("{e:#}") });
+                        let _ = tx.send(AppEvent::DeleteSummary {
+                            id,
+                            summary: format!("{e:#}"),
+                        });
                         return;
                     }
                 }
@@ -329,23 +370,40 @@ impl App {
             };
             let _ = tx.send(AppEvent::DeleteSummary { id, summary });
         });
-        self.modal = Some(Modal::ConfirmDelete { side, paths, what, summary: None, id });
+        self.modal = Some(Modal::ConfirmDelete {
+            side,
+            paths,
+            what,
+            summary: None,
+            id,
+        });
     }
 
     fn on_event(&mut self, ev: AppEvent) {
         match ev {
             AppEvent::Listing { side, id, result } => self.on_listing(side, id, result),
-            AppEvent::Preview { target: PreviewTarget::Main, id, preview } => {
+            AppEvent::Preview {
+                target: PreviewTarget::Main,
+                id,
+                preview,
+            } => {
                 if id == self.preview_id && self.preview.is_some() {
                     self.preview = Some(preview);
                 }
             }
-            AppEvent::Preview { target: PreviewTarget::Search, id, preview } => {
+            AppEvent::Preview {
+                target: PreviewTarget::Search,
+                id,
+                preview,
+            } => {
                 if let Some(s) = &mut self.search {
                     s.on_preview(id, preview);
                 }
             }
-            AppEvent::DeleteSummary { id: got, summary: s } => {
+            AppEvent::DeleteSummary {
+                id: got,
+                summary: s,
+            } => {
                 if let Some(Modal::ConfirmDelete { id, summary, .. }) = &mut self.modal
                     && *id == got
                 {
@@ -366,17 +424,34 @@ impl App {
                     s.on_done(error);
                 }
             }
-            AppEvent::Job(JobEvent::Progress { done_bytes, total_bytes, current }) => {
+            AppEvent::Job(JobEvent::Progress {
+                done_bytes,
+                total_bytes,
+                current,
+            }) => {
                 if let Some(j) = &mut self.job {
                     j.done = done_bytes;
                     j.total = total_bytes;
                     j.current = current;
                 }
             }
-            AppEvent::Job(JobEvent::Conflict { path, is_dir, reply }) => {
-                self.modal = Some(Modal::Conflict { path, is_dir, reply });
+            AppEvent::Job(JobEvent::Conflict {
+                path,
+                is_dir,
+                reply,
+            }) => {
+                self.modal = Some(Modal::Conflict {
+                    path,
+                    is_dir,
+                    reply,
+                });
             }
-            AppEvent::Job(JobEvent::Finished { message, is_error, refresh, select }) => {
+            AppEvent::Job(JobEvent::Finished {
+                message,
+                is_error,
+                refresh,
+                select,
+            }) => {
                 if matches!(self.modal, Some(Modal::ConfirmCancel)) {
                     self.modal = None;
                 }
@@ -493,8 +568,13 @@ impl App {
 
     fn open_search(&mut self, finder: bool) {
         let p = self.pane(self.active);
-        let (side, backend, root, hidden, tx) =
-            (self.active, p.backend.clone(), p.cwd.clone(), p.show_hidden, self.tx.clone());
+        let (side, backend, root, hidden, tx) = (
+            self.active,
+            p.backend.clone(),
+            p.cwd.clone(),
+            p.show_hidden,
+            self.tx.clone(),
+        );
         self.search = Some(if finder {
             SearchModal::finder(side, backend, root, hidden, tx)
         } else {
@@ -510,7 +590,10 @@ impl App {
             Action::Jump(rel) => {
                 let s = self.search.take().unwrap();
                 let abs = s.abs(&rel);
-                let dir = abs.parent().map(Path::to_path_buf).unwrap_or(s.root.clone());
+                let dir = abs
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or(s.root.clone());
                 self.active = s.side;
                 self.cd(s.side, dir, Some(fs::file_name(&abs)));
             }
@@ -524,7 +607,9 @@ impl App {
     }
 
     fn on_modal_key(&mut self, key: KeyEvent) {
-        let Some(modal) = self.modal.take() else { return };
+        let Some(modal) = self.modal.take() else {
+            return;
+        };
         let c = match key.code {
             KeyCode::Char(c) => c.to_ascii_lowercase(),
             KeyCode::Esc => '\x1b',
@@ -534,12 +619,23 @@ impl App {
         match modal {
             Modal::ConfirmDelete { side, paths, .. } if c == 'y' => {
                 self.pane_mut(side).marked.clear();
-                self.submit(Job::Delete { backend: self.pane(side).backend.clone(), paths, side }, true);
+                self.submit(
+                    Job::Delete {
+                        backend: self.pane(side).backend.clone(),
+                        paths,
+                        side,
+                    },
+                    true,
+                );
             }
             Modal::ConfirmDelete { .. } => self.set_status("Delete cancelled", false),
             Modal::ConfirmCopy { side, paths, .. } if c == 'y' => self.submit_copy(side, paths),
             Modal::ConfirmCopy { .. } => self.set_status("Copy cancelled", false),
-            Modal::Conflict { path, is_dir, reply } => {
+            Modal::Conflict {
+                path,
+                is_dir,
+                reply,
+            } => {
                 let r = match c {
                     'o' => Resolution::Overwrite,
                     's' => Resolution::Skip,
@@ -547,7 +643,11 @@ impl App {
                     'a' => Resolution::OverwriteAll,
                     'c' | '\x1b' => Resolution::Cancel,
                     _ => {
-                        self.modal = Some(Modal::Conflict { path, is_dir, reply });
+                        self.modal = Some(Modal::Conflict {
+                            path,
+                            is_dir,
+                            reply,
+                        });
                         return;
                     }
                 };
@@ -584,7 +684,11 @@ mod tests {
         t.draw(|f| ui::draw(f, app)).unwrap();
         let buf = t.backend().buffer();
         (0..buf.area.height)
-            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -632,13 +736,23 @@ mod tests {
         key(&mut a, KeyCode::Down);
         key(&mut a, KeyCode::Down);
         key(&mut a, KeyCode::Enter);
-        pump(&mut a, |a| a.preview.as_ref().is_some_and(|p| p.title == "hello.txt"));
+        pump(&mut a, |a| {
+            a.preview.as_ref().is_some_and(|p| p.title == "hello.txt")
+        });
         let s = screen(&mut a);
         assert!(s.contains("Preview: hello.txt"));
         assert!(s.contains("first line"));
 
         key(&mut a, KeyCode::Char('d'));
-        pump(&mut a, |a| matches!(&a.modal, Some(Modal::ConfirmDelete { summary: Some(_), .. })));
+        pump(&mut a, |a| {
+            matches!(
+                &a.modal,
+                Some(Modal::ConfirmDelete {
+                    summary: Some(_),
+                    ..
+                })
+            )
+        });
         let s = screen(&mut a);
         assert!(s.contains("Delete file \"hello.txt\" from Local?"));
         key(&mut a, KeyCode::Char('n'));
@@ -691,14 +805,22 @@ mod tests {
         let l = tempfile::tempdir().unwrap();
         let r = tempfile::tempdir().unwrap();
         std::fs::create_dir(l.path().join("src")).unwrap();
-        std::fs::write(l.path().join("src/main.rs"), "fn main() {\n    needle();\n}\n").unwrap();
+        std::fs::write(
+            l.path().join("src/main.rs"),
+            "fn main() {\n    needle();\n}\n",
+        )
+        .unwrap();
         let mut a = app(l.path(), r.path());
 
         key(&mut a, KeyCode::Char('/'));
         for c in "smain".chars() {
             key(&mut a, KeyCode::Char(c));
         }
-        pump(&mut a, |a| a.search.as_ref().is_some_and(|s| s.result_count() == 1 && s.preview.is_some()));
+        pump(&mut a, |a| {
+            a.search
+                .as_ref()
+                .is_some_and(|s| s.result_count() == 1 && s.preview.is_some())
+        });
         let s = screen(&mut a);
         assert!(s.contains("Find files in"));
         assert!(s.contains("src/main.rs"));
@@ -708,7 +830,11 @@ mod tests {
         for c in "needle".chars() {
             key(&mut a, KeyCode::Char(c));
         }
-        pump(&mut a, |a| a.search.as_ref().is_some_and(|s| s.result_count() == 1 && s.preview.is_some()));
+        pump(&mut a, |a| {
+            a.search
+                .as_ref()
+                .is_some_and(|s| s.result_count() == 1 && s.preview.is_some())
+        });
         let s = screen(&mut a);
         assert!(s.contains("1 hits"));
         assert!(s.contains("2: needle();"));

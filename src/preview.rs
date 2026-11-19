@@ -20,7 +20,11 @@ const MAX_SCAN: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub enum Body {
     /// `first_line` is the 1-based number of `lines[0]`.
-    Text { first_line: u64, lines: Vec<String>, numbered: bool },
+    Text {
+        first_line: u64,
+        lines: Vec<String>,
+        numbered: bool,
+    },
     Hex(Vec<String>),
     Dir(Vec<String>),
     Message(String),
@@ -101,7 +105,9 @@ fn as_text(bytes: &[u8]) -> Option<&str> {
     }
     match std::str::from_utf8(bytes) {
         Ok(s) => Some(s),
-        Err(e) if e.error_len().is_none() => Some(std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap()),
+        Err(e) if e.error_len().is_none() => {
+            Some(std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap())
+        }
         Err(_) => None,
     }
 }
@@ -120,7 +126,13 @@ pub fn hex_dump(bytes: &[u8]) -> Vec<String> {
             }
             let ascii: String = chunk
                 .iter()
-                .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+                .map(|&b| {
+                    if b.is_ascii_graphic() || b == b' ' {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
                 .collect();
             format!("{:08x}  {hex:<49} |{ascii}|", i * 16)
         })
@@ -134,7 +146,11 @@ fn info_line(b: &dyn Backend, path: &Path) -> Result<(String, crate::fs::Entry)>
         parts.push(format_size(e.size, BINARY));
     }
     if let Some(m) = e.modified {
-        parts.push(chrono::DateTime::<chrono::Local>::from(m).format("%Y-%m-%d %H:%M").to_string());
+        parts.push(
+            chrono::DateTime::<chrono::Local>::from(m)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+        );
     }
     if let Some(mode) = e.mode {
         parts.push(format_mode(mode, e.kind == Kind::Dir));
@@ -172,15 +188,20 @@ fn try_load(b: &dyn Backend, path: &Path, title: &str) -> Result<Preview> {
     match e.kind {
         Kind::Dir => {
             let mut entries = b.list(path)?;
-            entries.sort_by(|a, b| b.is_dir().cmp(&a.is_dir()).then_with(|| a.name.cmp(&b.name)));
+            entries.sort_by(|a, b| {
+                b.is_dir()
+                    .cmp(&a.is_dir())
+                    .then_with(|| a.name.cmp(&b.name))
+            });
             let n = entries.len();
             let mut lines = vec![format!("{n} entries"), String::new()];
-            lines.extend(
-                entries
-                    .iter()
-                    .take(DIR_NAMES)
-                    .map(|e| if e.is_dir() { format!("{}/", e.name) } else { e.name.clone() }),
-            );
+            lines.extend(entries.iter().take(DIR_NAMES).map(|e| {
+                if e.is_dir() {
+                    format!("{}/", e.name)
+                } else {
+                    e.name.clone()
+                }
+            }));
             p.truncated = n > DIR_NAMES;
             p.body = Body::Dir(lines);
         }
@@ -190,7 +211,11 @@ fn try_load(b: &dyn Backend, path: &Path, title: &str) -> Result<Preview> {
             p.truncated = e.size > buf.len() as u64;
             p.body = match as_text(&buf) {
                 Some("") => Body::Message("(empty file)".into()),
-                Some(s) => Body::Text { first_line: 1, lines: s.lines().map(expand_tabs).collect(), numbered: false },
+                Some(s) => Body::Text {
+                    first_line: 1,
+                    lines: s.lines().map(expand_tabs).collect(),
+                    numbered: false,
+                },
                 None => {
                     p.truncated = e.size > HEX_BYTES as u64;
                     Body::Hex(hex_dump(&buf[..buf.len().min(HEX_BYTES)]))
@@ -203,7 +228,12 @@ fn try_load(b: &dyn Backend, path: &Path, title: &str) -> Result<Preview> {
 }
 
 /// Preview of the lines around `line_no`, for grep results.
-pub fn load_around(b: &dyn Backend, path: &Path, line_no: u64, ranges: Vec<Range<usize>>) -> Preview {
+pub fn load_around(
+    b: &dyn Backend,
+    path: &Path,
+    line_no: u64,
+    ranges: Vec<Range<usize>>,
+) -> Preview {
     let title = fs::file_name(path);
     let result = (|| -> Result<Preview> {
         let (info, _) = info_line(b, path)?;
@@ -225,9 +255,16 @@ pub fn load_around(b: &dyn Backend, path: &Path, line_no: u64, ranges: Vec<Range
         let mut p = Preview::message(&title, "");
         p.info = info;
         p.body = if lines.is_empty() {
-            Body::Message(format!("line {line_no} is past the first {}", format_size(MAX_SCAN, BINARY)))
+            Body::Message(format!(
+                "line {line_no} is past the first {}",
+                format_size(MAX_SCAN, BINARY)
+            ))
         } else {
-            Body::Text { first_line: first, lines, numbered: true }
+            Body::Text {
+                first_line: first,
+                lines,
+                numbered: true,
+            }
         };
         p.focus = Some((line_no, ranges));
         Ok(p)
@@ -243,7 +280,10 @@ mod tests {
     #[test]
     fn hex_format() {
         let lines = hex_dump(b"ABCDEFGHIJKLMNOPQ\x00");
-        assert_eq!(lines[0], "00000000  41 42 43 44 45 46 47 48  49 4a 4b 4c 4d 4e 4f 50  |ABCDEFGHIJKLMNOP|");
+        assert_eq!(
+            lines[0],
+            "00000000  41 42 43 44 45 46 47 48  49 4a 4b 4c 4d 4e 4f 50  |ABCDEFGHIJKLMNOP|"
+        );
         assert!(lines[1].starts_with("00000010  51 00 "));
         assert!(lines[1].ends_with("|Q.|"));
     }
@@ -266,7 +306,9 @@ mod tests {
         std::fs::write(&f, text).unwrap();
         let p = load_around(&LocalFs, &f, 500, vec![0..4]);
         match &p.body {
-            Body::Text { first_line, lines, .. } => {
+            Body::Text {
+                first_line, lines, ..
+            } => {
                 assert_eq!(*first_line, 300);
                 assert_eq!(lines[200], "line 500");
                 assert_eq!(lines.len(), 401);

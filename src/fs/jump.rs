@@ -15,19 +15,36 @@ pub use stub::Jump;
 /// Splits a `-J`/`ProxyJump` list into hops. `None` for an empty list or
 /// `none`, which OpenSSH uses to switch jumping off.
 pub fn hops(spec: &str) -> Option<Vec<String>> {
-    let hops: Vec<String> = spec.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
-    if hops.is_empty() || (hops.len() == 1 && hops[0].eq_ignore_ascii_case("none")) { None } else { Some(hops) }
+    let hops: Vec<String> = spec
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    if hops.is_empty() || (hops.len() == 1 && hops[0].eq_ignore_ascii_case("none")) {
+        None
+    } else {
+        Some(hops)
+    }
 }
 
 /// A `-J` hop (`[user@]host[:port]`) as a destination ssh accepts on its
 /// own command line, where `host:port` isn't understood.
 fn dest_uri(hop: &str) -> String {
-    if hop.starts_with("ssh://") { hop.to_string() } else { format!("ssh://{hop}") }
+    if hop.starts_with("ssh://") {
+        hop.to_string()
+    } else {
+        format!("ssh://{hop}")
+    }
 }
 
 /// `host:port` for `ssh -W`, with IPv6 addresses bracketed.
 fn forward_spec(host: &str, port: u16) -> String {
-    if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") }
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
 }
 
 #[cfg(unix)]
@@ -64,13 +81,26 @@ mod imp {
         /// prompt on the terminal.
         pub fn start(hops: &[String]) -> Result<Jump> {
             static SEQ: AtomicUsize = AtomicUsize::new(0);
-            let Some((last, via)) = hops.split_last() else { bail!("empty jump host list") };
+            let Some((last, via)) = hops.split_last() else {
+                bail!("empty jump host list")
+            };
             // Socket paths are limited to ~100 bytes (104 on macOS) and ssh
             // appends 17 characters while binding, so a long $TMPDIR won't do.
             let tmp = std::env::temp_dir();
-            let tmp = if tmp.as_os_str().len() > 60 { PathBuf::from("/tmp") } else { tmp };
-            let dir = tmp.join(format!("rcp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
-            DirBuilder::new().mode(0o700).create(&dir).with_context(|| format!("create {}", dir.display()))?;
+            let tmp = if tmp.as_os_str().len() > 60 {
+                PathBuf::from("/tmp")
+            } else {
+                tmp
+            };
+            let dir = tmp.join(format!(
+                "rcp-{}-{}",
+                std::process::id(),
+                SEQ.fetch_add(1, Ordering::Relaxed)
+            ));
+            DirBuilder::new()
+                .mode(0o700)
+                .create(&dir)
+                .with_context(|| format!("create {}", dir.display()))?;
             let j = Jump {
                 via: (!via.is_empty()).then(|| via.join(",")),
                 last: dest_uri(last),
@@ -85,7 +115,9 @@ mod imp {
 
         fn ssh(&self) -> Command {
             let mut cmd = Command::new("ssh");
-            cmd.arg("-S").arg(&self.sock).args(["-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR"]);
+            cmd.arg("-S")
+                .arg(&self.sock)
+                .args(["-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR"]);
             if let Some(via) = &self.via {
                 cmd.arg("-J").arg(via);
             }
@@ -101,7 +133,9 @@ mod imp {
             let mut cmd = self.ssh();
             cmd.args(["-M", "-N", "-o", "ControlPersist=no"]);
             if !interactive {
-                cmd.args(["-o", "BatchMode=yes"]).stdin(Stdio::null()).stderr(Stdio::null());
+                cmd.args(["-o", "BatchMode=yes"])
+                    .stdin(Stdio::null())
+                    .stderr(Stdio::null());
             }
             let mut child = cmd
                 .arg(&self.last)
@@ -141,7 +175,11 @@ mod imp {
                 .arg(&self.last)
                 .stdin(OwnedFd::from(theirs))
                 .stdout(OwnedFd::from(out))
-                .stderr(if show_errors { Stdio::inherit() } else { Stdio::null() })
+                .stderr(if show_errors {
+                    Stdio::inherit()
+                } else {
+                    Stdio::null()
+                })
                 .spawn()
                 .context("run ssh -W")?;
             Ok(Tunnel { sock: ours, child })
@@ -203,7 +241,10 @@ mod tests {
 
     #[test]
     fn splits_hops() {
-        assert_eq!(hops("a, b@c:2222,"), Some(vec!["a".into(), "b@c:2222".into()]));
+        assert_eq!(
+            hops("a, b@c:2222,"),
+            Some(vec!["a".into(), "b@c:2222".into()])
+        );
         assert_eq!(hops("none"), None);
         assert_eq!(hops("NONE"), None);
         assert_eq!(hops(" "), None);

@@ -30,7 +30,9 @@ impl Finder {
 
     pub fn set_query(&mut self, q: &str) {
         let append = q.starts_with(&self.last_query);
-        self.nucleo.pattern.reparse(0, q, CaseMatching::Smart, Normalization::Smart, append);
+        self.nucleo
+            .pattern
+            .reparse(0, q, CaseMatching::Smart, Normalization::Smart, append);
         self.last_query = q.to_string();
     }
 
@@ -47,7 +49,10 @@ impl Finder {
     }
 
     pub fn get(&self, idx: u32) -> Option<String> {
-        self.nucleo.snapshot().get_matched_item(idx).map(|i| i.data.clone())
+        self.nucleo
+            .snapshot()
+            .get_matched_item(idx)
+            .map(|i| i.data.clone())
     }
 
     /// Matched paths in `start..end` with the char indices that matched.
@@ -83,7 +88,12 @@ mod tests {
     fn matches_and_highlights() {
         let mut f = Finder::new();
         let inj = f.restart();
-        for p in ["src/main.rs", "docs/maintainers.md", "src/app.rs", "README.md"] {
+        for p in [
+            "src/main.rs",
+            "docs/maintainers.md",
+            "src/app.rs",
+            "README.md",
+        ] {
             push(&inj, p.into());
         }
         f.set_query("srcmain");

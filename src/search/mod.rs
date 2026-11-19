@@ -85,7 +85,14 @@ pub struct SearchModal {
 }
 
 impl SearchModal {
-    fn new(side: Side, backend: Arc<dyn Backend>, root: PathBuf, mode: Mode, hidden: bool, tx: Sender<AppEvent>) -> Self {
+    fn new(
+        side: Side,
+        backend: Arc<dyn Backend>,
+        root: PathBuf,
+        mode: Mode,
+        hidden: bool,
+        tx: Sender<AppEvent>,
+    ) -> Self {
         SearchModal {
             side,
             backend,
@@ -110,13 +117,25 @@ impl SearchModal {
         }
     }
 
-    pub fn finder(side: Side, backend: Arc<dyn Backend>, root: PathBuf, hidden: bool, tx: Sender<AppEvent>) -> Self {
+    pub fn finder(
+        side: Side,
+        backend: Arc<dyn Backend>,
+        root: PathBuf,
+        hidden: bool,
+        tx: Sender<AppEvent>,
+    ) -> Self {
         let mut m = Self::new(side, backend, root, Mode::Finder(Finder::new()), hidden, tx);
         m.start();
         m
     }
 
-    pub fn grep(side: Side, backend: Arc<dyn Backend>, root: PathBuf, hidden: bool, tx: Sender<AppEvent>) -> Self {
+    pub fn grep(
+        side: Side,
+        backend: Arc<dyn Backend>,
+        root: PathBuf,
+        hidden: bool,
+        tx: Sender<AppEvent>,
+    ) -> Self {
         let state = GrepState {
             results: Results::default(),
             regex: true,
@@ -145,7 +164,10 @@ impl SearchModal {
     pub fn selected(&self) -> Option<(String, Option<Hit>)> {
         match &self.mode {
             Mode::Finder(f) => f.get(self.cursor as u32).map(|p| (p, None)),
-            Mode::Grep(g) => g.results.get(self.cursor).map(|(p, h)| (p.to_string(), Some(h.clone()))),
+            Mode::Grep(g) => g
+                .results
+                .get(self.cursor)
+                .map(|(p, h)| (p.to_string(), Some(h.clone()))),
         }
     }
 
@@ -165,12 +187,20 @@ impl SearchModal {
         self.cursor = 0;
         self.offset = 0;
         self.error = None;
-        let (id, cancel, tx, backend, root) =
-            (self.search_id, self.cancel.clone(), self.tx.clone(), self.backend.clone(), self.root.clone());
+        let (id, cancel, tx, backend, root) = (
+            self.search_id,
+            self.cancel.clone(),
+            self.tx.clone(),
+            self.backend.clone(),
+            self.root.clone(),
+        );
         match &mut self.mode {
             Mode::Finder(f) => {
                 let injector = f.restart();
-                let opts = WalkOpts { hidden: self.hidden, respect_ignore: self.respect_ignore };
+                let opts = WalkOpts {
+                    hidden: self.hidden,
+                    respect_ignore: self.respect_ignore,
+                };
                 self.running = true;
                 thread::spawn(move || {
                     let count = AtomicU64::new(0);
@@ -182,12 +212,18 @@ impl SearchModal {
                             }
                         }
                         SearchEvent::Error(e) => {
-                            let _ = emit_tx.send(AppEvent::Search { id, event: SearchEvent::Error(e) });
+                            let _ = emit_tx.send(AppEvent::Search {
+                                id,
+                                event: SearchEvent::Error(e),
+                            });
                         }
                         SearchEvent::Match { .. } => {}
                     };
                     let r = backend.walk_files(&root, opts, &emit, &cancel);
-                    let _ = tx.send(AppEvent::SearchDone { id, error: r.err().map(|e| format!("{e:#}")) });
+                    let _ = tx.send(AppEvent::SearchDone {
+                        id,
+                        error: r.err().map(|e| format!("{e:#}")),
+                    });
                 });
             }
             Mode::Grep(g) => {
@@ -214,7 +250,10 @@ impl SearchModal {
                         let _ = emit_tx.send(AppEvent::Search { id, event });
                     };
                     let r = backend.grep(&root, &q, &emit, &cancel);
-                    let _ = tx.send(AppEvent::SearchDone { id, error: r.err().map(|e| format!("{e:#}")) });
+                    let _ = tx.send(AppEvent::SearchDone {
+                        id,
+                        error: r.err().map(|e| format!("{e:#}")),
+                    });
                 });
             }
         }
@@ -222,13 +261,28 @@ impl SearchModal {
 
     pub fn on_search_event(&mut self, event: SearchEvent) {
         match (event, &mut self.mode) {
-            (SearchEvent::Match { path, line_no, line, ranges }, Mode::Grep(g)) => {
+            (
+                SearchEvent::Match {
+                    path,
+                    line_no,
+                    line,
+                    ranges,
+                },
+                Mode::Grep(g),
+            ) => {
                 if g.results.count >= MAX_HITS {
                     g.truncated = true;
                     self.cancel.store(true, Ordering::Relaxed);
                     return;
                 }
-                g.results.push(path, Hit { line_no, line, ranges });
+                g.results.push(
+                    path,
+                    Hit {
+                        line_no,
+                        line,
+                        ranges,
+                    },
+                );
             }
             (SearchEvent::Error(e), _) => self.error = Some(e),
             _ => {}
@@ -287,13 +341,22 @@ impl SearchModal {
         self.loaded_key = Some(key);
         self.pending_key = None;
         self.preview_id = next_id();
-        let (id, tx, backend, path) = (self.preview_id, self.tx.clone(), self.backend.clone(), self.abs(&rel));
+        let (id, tx, backend, path) = (
+            self.preview_id,
+            self.tx.clone(),
+            self.backend.clone(),
+            self.abs(&rel),
+        );
         thread::spawn(move || {
             let preview = match hit {
                 Some(h) => preview::load_around(&*backend, &path, h.line_no, h.ranges),
                 None => preview::load(&*backend, &path),
             };
-            let _ = tx.send(AppEvent::Preview { target: PreviewTarget::Search, id, preview });
+            let _ = tx.send(AppEvent::Preview {
+                target: PreviewTarget::Search,
+                id,
+                preview,
+            });
         });
     }
 

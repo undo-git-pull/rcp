@@ -24,7 +24,11 @@ fn entry_from(name: String, path: &Path) -> Result<Entry> {
     let lmeta = fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
     let is_symlink = lmeta.file_type().is_symlink();
     // A dangling symlink falls back to the link's own metadata.
-    let meta = if is_symlink { fs::metadata(path).unwrap_or(lmeta) } else { lmeta };
+    let meta = if is_symlink {
+        fs::metadata(path).unwrap_or(lmeta)
+    } else {
+        lmeta
+    };
     let ft = meta.file_type();
     let kind = if ft.is_dir() {
         Kind::Dir
@@ -67,7 +71,10 @@ fn walk_builder(root: &Path, hidden: bool, respect_ignore: bool) -> WalkBuilder 
 
 /// Truncates a line to `MAX_LINE_LEN` bytes (on a char boundary) and drops
 /// match ranges that no longer fit.
-pub fn clip_hit(line: &str, ranges: Vec<std::ops::Range<usize>>) -> (String, Vec<std::ops::Range<usize>>) {
+pub fn clip_hit(
+    line: &str,
+    ranges: Vec<std::ops::Range<usize>>,
+) -> (String, Vec<std::ops::Range<usize>>) {
     let line = line.trim_end_matches(['\n', '\r']);
     if line.len() <= MAX_LINE_LEN {
         return (line.to_string(), ranges);
@@ -124,11 +131,15 @@ impl Backend for LocalFs {
     }
 
     fn open_read(&self, path: &Path) -> Result<Box<dyn Read + Send>> {
-        Ok(Box::new(File::open(path).with_context(|| format!("open {}", path.display()))?))
+        Ok(Box::new(
+            File::open(path).with_context(|| format!("open {}", path.display()))?,
+        ))
     }
 
     fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
-        Ok(Box::new(File::create(path).with_context(|| format!("create {}", path.display()))?))
+        Ok(Box::new(
+            File::create(path).with_context(|| format!("create {}", path.display()))?,
+        ))
     }
 
     fn mkdir(&self, path: &Path) -> Result<()> {
@@ -144,7 +155,8 @@ impl Backend for LocalFs {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<()> {
-        fs::rename(from, to).with_context(|| format!("rename {} -> {}", from.display(), to.display()))
+        fs::rename(from, to)
+            .with_context(|| format!("rename {} -> {}", from.display(), to.display()))
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> Result<()> {
@@ -154,23 +166,32 @@ impl Backend for LocalFs {
 
     fn set_mtime(&self, path: &Path, mtime: SystemTime) -> Result<()> {
         let f = File::options().write(true).open(path)?;
-        f.set_modified(mtime).with_context(|| format!("set mtime {}", path.display()))
+        f.set_modified(mtime)
+            .with_context(|| format!("set mtime {}", path.display()))
     }
 
-    fn walk_files(&self, root: &Path, opts: WalkOpts, emit: Emit, cancel: &AtomicBool) -> Result<()> {
-        walk_builder(root, opts.hidden, opts.respect_ignore).build_parallel().run(|| {
-            Box::new(move |res| {
-                if cancel.load(Ordering::Relaxed) {
-                    return WalkState::Quit;
-                }
-                if let Ok(e) = res
-                    && e.file_type().is_some_and(|t| t.is_file())
-                {
-                    emit(SearchEvent::Path(rel(root, e.path())));
-                }
-                WalkState::Continue
-            })
-        });
+    fn walk_files(
+        &self,
+        root: &Path,
+        opts: WalkOpts,
+        emit: Emit,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        walk_builder(root, opts.hidden, opts.respect_ignore)
+            .build_parallel()
+            .run(|| {
+                Box::new(move |res| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return WalkState::Quit;
+                    }
+                    if let Ok(e) = res
+                        && e.file_type().is_some_and(|t| t.is_file())
+                    {
+                        emit(SearchEvent::Path(rel(root, e.path())));
+                    }
+                    WalkState::Continue
+                })
+            });
         Ok(())
     }
 
@@ -199,7 +220,9 @@ impl Backend for LocalFs {
                 if cancel.load(Ordering::Relaxed) {
                     return WalkState::Quit;
                 }
-                let Ok(e) = res else { return WalkState::Continue };
+                let Ok(e) = res else {
+                    return WalkState::Continue;
+                };
                 if !e.file_type().is_some_and(|t| t.is_file()) {
                     return WalkState::Continue;
                 }
@@ -214,7 +237,12 @@ impl Backend for LocalFs {
                             true
                         })?;
                         let (line, ranges) = clip_hit(line, ranges);
-                        emit(SearchEvent::Match { path: path.clone(), line_no, line, ranges });
+                        emit(SearchEvent::Match {
+                            path: path.clone(),
+                            line_no,
+                            line,
+                            ranges,
+                        });
                         Ok(!cancel.load(Ordering::Relaxed))
                     }),
                 );
@@ -244,7 +272,11 @@ mod tests {
         let p = d.path();
         fs::create_dir_all(p.join("src/sub")).unwrap();
         fs::create_dir_all(p.join("target")).unwrap();
-        fs::write(p.join("src/main.rs"), "fn main() {\n    copy_entry(\"x\");\n}\n").unwrap();
+        fs::write(
+            p.join("src/main.rs"),
+            "fn main() {\n    copy_entry(\"x\");\n}\n",
+        )
+        .unwrap();
         fs::write(p.join("src/sub/lib.rs"), "pub fn Copy_Entry() {}\n").unwrap();
         fs::write(p.join("target/out.rs"), "copy_entry\n").unwrap();
         fs::write(p.join(".hidden.rs"), "copy_entry\n").unwrap();
@@ -272,16 +304,43 @@ mod tests {
         let d = tree();
         let cancel = AtomicBool::new(false);
         let ev = collect(|emit| {
-            LocalFs.walk_files(d.path(), WalkOpts { hidden: false, respect_ignore: true }, emit, &cancel).unwrap()
+            LocalFs
+                .walk_files(
+                    d.path(),
+                    WalkOpts {
+                        hidden: false,
+                        respect_ignore: true,
+                    },
+                    emit,
+                    &cancel,
+                )
+                .unwrap()
         });
         assert_eq!(paths(&ev), vec!["bin.dat", "src/main.rs", "src/sub/lib.rs"]);
 
         let ev = collect(|emit| {
-            LocalFs.walk_files(d.path(), WalkOpts { hidden: true, respect_ignore: false }, emit, &cancel).unwrap()
+            LocalFs
+                .walk_files(
+                    d.path(),
+                    WalkOpts {
+                        hidden: true,
+                        respect_ignore: false,
+                    },
+                    emit,
+                    &cancel,
+                )
+                .unwrap()
         });
         assert_eq!(
             paths(&ev),
-            vec![".gitignore", ".hidden.rs", "bin.dat", "src/main.rs", "src/sub/lib.rs", "target/out.rs"]
+            vec![
+                ".gitignore",
+                ".hidden.rs",
+                "bin.dat",
+                "src/main.rs",
+                "src/sub/lib.rs",
+                "target/out.rs"
+            ]
         );
     }
 
@@ -289,23 +348,34 @@ mod tests {
     fn grep_smart_case_skips_binary_and_reports_ranges() {
         let d = tree();
         let cancel = AtomicBool::new(false);
-        let q = GrepQuery { pattern: "copy_entry".into(), regex: true, respect_ignore: true, ..Default::default() };
+        let q = GrepQuery {
+            pattern: "copy_entry".into(),
+            regex: true,
+            respect_ignore: true,
+            ..Default::default()
+        };
         let ev = collect(|emit| LocalFs.grep(d.path(), &q, emit, &cancel).unwrap());
         // Smart case: lowercase pattern matches Copy_Entry too; binary file skipped.
         assert_eq!(paths(&ev), vec!["src/main.rs", "src/sub/lib.rs"]);
         let hit = ev
             .iter()
             .find_map(|e| match e {
-                SearchEvent::Match { path, line_no, line, ranges } if path == "src/main.rs" => {
-                    Some((*line_no, line.clone(), ranges.clone()))
-                }
+                SearchEvent::Match {
+                    path,
+                    line_no,
+                    line,
+                    ranges,
+                } if path == "src/main.rs" => Some((*line_no, line.clone(), ranges.clone())),
                 _ => None,
             })
             .unwrap();
         assert_eq!(hit.0, 2);
         assert_eq!(&hit.1[hit.2[0].clone()], "copy_entry");
 
-        let q = GrepQuery { case: CaseMode::Sensitive, ..q };
+        let q = GrepQuery {
+            case: CaseMode::Sensitive,
+            ..q
+        };
         let ev = collect(|emit| LocalFs.grep(d.path(), &q, emit, &cancel).unwrap());
         assert_eq!(paths(&ev), vec!["src/main.rs"]);
     }
@@ -323,7 +393,11 @@ mod tests {
         let ev = collect(|emit| LocalFs.grep(d.path(), &q, emit, &cancel).unwrap());
         assert_eq!(paths(&ev), vec!["src/main.rs"]);
 
-        let q = GrepQuery { pattern: "copy".into(), globs: vec!["!src/sub/**".into()], ..q };
+        let q = GrepQuery {
+            pattern: "copy".into(),
+            globs: vec!["!src/sub/**".into()],
+            ..q
+        };
         let ev = collect(|emit| LocalFs.grep(d.path(), &q, emit, &cancel).unwrap());
         assert_eq!(paths(&ev), vec!["src/main.rs"]);
     }

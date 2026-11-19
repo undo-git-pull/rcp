@@ -44,6 +44,15 @@ RCP_KNOWN_HOSTS=/tmp/test_known_hosts cargo test
 
 `RCP_KNOWN_HOSTS` makes rcp read and write that file instead of `~/.ssh/known_hosts`, so tests don't touch your real one. Add `RCP_TEST_SSH_JUMP=user@jumphost` to run the same test through a jump host.
 
+### Formatting
+
+Format the code with rustfmt before committing:
+
+```sh
+cargo fmt                      # rewrite files in place
+cargo fmt --check              # only report files that need formatting
+```
+
 ## Usage
 
 ```
