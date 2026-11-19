@@ -96,8 +96,10 @@ pub trait Backend: Send + Sync {
     /// True if anything (including a dangling symlink) exists at `path`.
     fn exists(&self, path: &Path) -> Result<bool>;
     fn open_read(&self, path: &Path) -> Result<Box<dyn Read + Send>>;
-    /// Create or truncate.
+    /// Creates a new file, readable only by the owner. Fails if anything,
+    /// including a symlink, already exists at `path`.
     fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>>;
+    /// Creates a directory accessible only by the owner.
     fn mkdir(&self, path: &Path) -> Result<()>;
     /// Removes a file or a symlink (never follows it).
     fn remove_file(&self, path: &Path) -> Result<()>;
@@ -128,6 +130,13 @@ pub trait Backend: Send + Sync {
 /// Joins remote-style paths with `/` regardless of host platform.
 pub fn join(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
+}
+
+/// True if `name` is a single path component. Names listed by a remote
+/// server can't be trusted: `x/..` or `../a` would escape the directory
+/// they're joined onto.
+pub fn is_plain_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
 }
 
 pub fn parent(path: &Path) -> Option<PathBuf> {

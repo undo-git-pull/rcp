@@ -1,6 +1,6 @@
-use std::fs::{self, File};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
@@ -137,13 +137,21 @@ impl Backend for LocalFs {
     }
 
     fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
-        Ok(Box::new(
-            File::create(path).with_context(|| format!("create {}", path.display()))?,
-        ))
+        // O_EXCL: never follows a symlink planted at `path`.
+        let f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("create {}", path.display()))?;
+        Ok(Box::new(f))
     }
 
     fn mkdir(&self, path: &Path) -> Result<()> {
-        fs::create_dir(path).with_context(|| format!("mkdir {}", path.display()))
+        DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .with_context(|| format!("mkdir {}", path.display()))
     }
 
     fn remove_file(&self, path: &Path) -> Result<()> {

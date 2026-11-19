@@ -118,6 +118,9 @@ impl Copier<'_> {
     /// or None if skipped.
     pub fn copy_into(&mut self, src_path: &Path, dst_dir: &Path) -> Result<Option<String>> {
         let name = fs::file_name(src_path);
+        if !fs::is_plain_name(&name) {
+            bail!("refusing to copy {}: unsafe name", src_path.display());
+        }
         let dst_path = fs::join(dst_dir, &name);
         self.copy_entry(src_path, &dst_path, true)
     }
@@ -172,6 +175,14 @@ impl Copier<'_> {
                 let mut children = self.src.list(src_path)?;
                 children.sort_by(|a, b| a.name.cmp(&b.name));
                 for c in children {
+                    if !fs::is_plain_name(&c.name) {
+                        self.notes.push(format!(
+                            "skipped unsafe name {:?} in {}",
+                            c.name,
+                            src_path.display()
+                        ));
+                        continue;
+                    }
                     let s = fs::join(src_path, &c.name);
                     let d = fs::join(&dst_path, &c.name);
                     match self.copy_entry(&s, &d, false) {
@@ -218,6 +229,11 @@ impl Copier<'_> {
     fn copy_file(&mut self, src_path: &Path, dst_path: &Path) -> Result<()> {
         let part = dst_path.with_file_name(format!("{}{PART_SUFFIX}", fs::file_name(dst_path)));
         let current = fs::file_name(src_path);
+        // A leftover from an earlier failed copy, or a planted symlink;
+        // open_write refuses to reuse either.
+        if self.dst.exists(&part)? {
+            self.dst.remove_file(&part)?;
+        }
         let result = (|| -> Result<()> {
             let mut r = self.src.open_read(src_path)?;
             let mut w = self.dst.open_write(&part)?;
@@ -356,6 +372,45 @@ mod tests {
 
         let (r, _) = run(&src, d.path(), Resolution::Cancel, &cancel);
         assert!(is_cancelled(&r.unwrap_err()));
+    }
+
+    #[test]
+    fn rejects_unsafe_names() {
+        for bad in ["", ".", "..", "a/..", "../x", "/etc", "a\0b"] {
+            assert!(!fs::is_plain_name(bad), "{bad:?}");
+        }
+        for ok in ["a", ".bashrc", "..x", "x..", "a b:c"] {
+            assert!(fs::is_plain_name(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn planted_part_symlink_is_not_followed() {
+        let s = tempfile::tempdir().unwrap();
+        let d = tempfile::tempdir().unwrap();
+        let victim = s.path().join("victim");
+        stdfs::write(&victim, "keep").unwrap();
+        stdfs::write(s.path().join("x.txt"), "new").unwrap();
+        std::os::unix::fs::symlink(&victim, d.path().join("x.txt.rcp-part")).unwrap();
+        let cancel = AtomicBool::new(false);
+        let (r, _) = run(
+            &s.path().join("x.txt"),
+            d.path(),
+            Resolution::Cancel,
+            &cancel,
+        );
+        assert_eq!(r.unwrap().as_deref(), Some("x.txt"));
+        assert_eq!(stdfs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(
+            stdfs::read_to_string(d.path().join("x.txt")).unwrap(),
+            "new"
+        );
+        assert!(
+            !stdfs::symlink_metadata(&victim)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]

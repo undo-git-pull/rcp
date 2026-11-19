@@ -299,9 +299,14 @@ impl Backend for SftpFs {
             .sftp
             .readdir(&dir)
             .with_context(|| self.ctx("list", &dir))?;
+        // ssh2 joins each raw name onto `dir`; drop names that aren't a
+        // single component rather than let them point elsewhere.
         Ok(items
             .into_iter()
-            .map(|(path, st)| self.entry(&conn.sftp, super::file_name(&path), &path, st))
+            .filter_map(|(path, st)| {
+                let name = path.strip_prefix(&dir).ok()?.to_string_lossy().into_owned();
+                super::is_plain_name(&name).then(|| self.entry(&conn.sftp, name, &path, st))
+            })
             .collect())
     }
 
@@ -335,11 +340,12 @@ impl Backend for SftpFs {
 
     fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
         let p = self.abs(path);
-        let flags = OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE;
+        // EXCLUSIVE: never follows a symlink planted at `p`.
+        let flags = OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUSIVE;
         let f = self
             .sftp()
             .sftp
-            .open_mode(&p, flags, 0o644, OpenType::File)
+            .open_mode(&p, flags, 0o600, OpenType::File)
             .with_context(|| self.ctx("create", &p))?;
         Ok(Box::new(BufWriter::with_capacity(IO_BUF, f)))
     }
@@ -348,7 +354,7 @@ impl Backend for SftpFs {
         let p = self.abs(path);
         self.sftp()
             .sftp
-            .mkdir(&p, 0o755)
+            .mkdir(&p, 0o700)
             .with_context(|| self.ctx("mkdir", &p))
     }
 
@@ -702,6 +708,9 @@ fn verify_host(sess: &Session, kh: &str, path: &Path, d: &Dest, key: &[u8]) -> R
         .map(|h| b64_encode(h, false))
         .unwrap_or_default();
     let spec = host_spec(&d.host, d.port);
+    if ktype == "unknown" {
+        bail!("{spec} sent a host key of unrecognised type; refusing to connect");
+    }
     if changed {
         bail!(
             "HOST KEY FOR {spec} HAS CHANGED (now {ktype} SHA256:{fp}). Someone could be eavesdropping, or the \
@@ -743,15 +752,31 @@ fn append_known_host(path: &Path, spec: &str, ktype: &str, key: &[u8]) -> Result
     Ok(())
 }
 
-/// The key type name is the first string in an SSH public key blob.
+/// The key type name is the first string in an SSH public key blob. The
+/// server sends it, so anything outside the characters real type names use
+/// (which could inject lines into known_hosts or escapes into the terminal)
+/// comes back as "unknown".
 fn key_type(blob: &[u8]) -> String {
     let n = blob
         .get(..4)
         .map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize)
         .unwrap_or(0);
     blob.get(4..4 + n)
+        .filter(|t| {
+            !t.is_empty()
+                && t.iter()
+                    .all(|c| c.is_ascii_alphanumeric() || b"@.-_".contains(c))
+        })
         .map(|t| String::from_utf8_lossy(t).into_owned())
         .unwrap_or_else(|| "unknown".into())
+}
+
+/// Server-supplied text with control characters (escape sequences) removed,
+/// keeping line breaks and tabs.
+fn printable(s: &str) -> String {
+    s.chars()
+        .filter(|&c| !c.is_control() || c == '\n' || c == '\t')
+        .collect()
 }
 
 fn sftp_conn(sess: Session) -> Result<Conn> {
@@ -778,11 +803,11 @@ impl KeyboardInteractivePrompt for Kbd {
             return prompts.iter().map(|_| a.clone()).collect();
         }
         if !instructions.is_empty() {
-            eprintln!("{instructions}");
+            eprintln!("{}", printable(instructions));
         }
         let answers: Vec<String> = prompts
             .iter()
-            .map(|p| rpassword::prompt_password(p.text.as_ref()).unwrap_or_default())
+            .map(|p| rpassword::prompt_password(printable(&p.text)).unwrap_or_default())
             .collect();
         self.answer = answers.first().cloned();
         answers
@@ -1321,6 +1346,8 @@ mod tests {
         assert_eq!(b64_encode(b"fooba", true), "Zm9vYmE=");
         assert_eq!(b64_encode(b"foob", false), "Zm9vYg");
         assert_eq!(key_type(b"\0\0\0\x0bssh-ed25519\0\0"), "ssh-ed25519");
+        assert_eq!(key_type(b"\0\0\0\x05a b\nc"), "unknown");
+        assert_eq!(printable("hi\x1b[2Jthere\n"), "hi[2Jthere\n");
     }
 
     #[test]
