@@ -100,7 +100,8 @@ jobs:
         run: |
           bin=target/${{ matrix.target }}/release/rcp
           file "$bin"
-          file "$bin" | grep -q 'statically linked' || {
+          # Newer `file` reports static PIE binaries as "static-pie linked".
+          file "$bin" | grep -qE 'statically linked|static-pie linked' || {
             echo "::error::binary is not statically linked"
             exit 1
           }
