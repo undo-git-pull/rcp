@@ -1,0 +1,137 @@
+# Builds release binaries when a v* tag is pushed and publishes them to a
+# GitHub release. Uses no secrets beyond the built-in GITHUB_TOKEN.
+#
+# Release: set `version` in Cargo.toml, commit, then
+#   git tag v<version> && git push origin v<version>
+# The Homebrew tap is updated by hand afterwards with scripts/update-formula.sh.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches Cargo.toml
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$cargo_version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $cargo_version"
+            exit 1
+          fi
+
+  macos:
+    needs: check-version
+    runs-on: macos-latest
+    env:
+      # Oldest macOS the binary will run on.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --locked
+      - name: Build
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Universal binary
+        run: |
+          mkdir -p dist/pkg
+          lipo -create -output dist/pkg/rcp \
+            target/aarch64-apple-darwin/release/rcp \
+            target/x86_64-apple-darwin/release/rcp
+          # Ad-hoc signature: Apple silicon refuses to run unsigned code.
+          codesign --force --sign - dist/pkg/rcp
+          lipo -info dist/pkg/rcp
+          # Fail if anything outside the OS is linked (e.g. Homebrew OpenSSL).
+          if otool -L dist/pkg/rcp | tail -n +2 | grep -vE '^\s+/(usr/lib|System)/'; then
+            echo "::error::binary links non-system libraries"
+            exit 1
+          fi
+          dist/pkg/rcp --version
+      - name: Package
+        run: |
+          cd dist
+          tar czf rcp-macos-universal.tar.gz -C pkg rcp
+          shasum -a 256 rcp-macos-universal.tar.gz > rcp-macos-universal.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rcp-macos
+          path: dist/rcp-macos-universal.tar.gz*
+
+  linux:
+    needs: check-version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build
+        run: cross build --release --locked --target ${{ matrix.target }}
+      - name: Check static
+        run: |
+          bin=target/${{ matrix.target }}/release/rcp
+          file "$bin"
+          file "$bin" | grep -q 'statically linked' || {
+            echo "::error::binary is not statically linked"
+            exit 1
+          }
+          if [ "${{ matrix.arch }}" = x86_64 ]; then "$bin" --version; fi
+      - name: Package
+        run: |
+          name=rcp-linux-${{ matrix.arch }}.tar.gz
+          mkdir -p dist
+          tar czf "dist/$name" -C target/${{ matrix.target }}/release rcp
+          (cd dist && sha256sum "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rcp-linux-${{ matrix.arch }}
+          path: dist/rcp-linux-*
+
+  release:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
+

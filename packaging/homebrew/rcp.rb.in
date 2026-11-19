@@ -1,0 +1,32 @@
+# Template for the Homebrew formula. scripts/update-formula.sh fills in @VERSION@, @REPO@ and
+# the @SHA256_*@ placeholders and writes the result to Formula/rcp.rb in a homebrew-tap checkout.
+class Rcp < Formula
+  desc "Two-pane TUI file copier (local and SSH)"
+  homepage "https://github.com/@REPO@"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    url "https://github.com/@REPO@/releases/download/v@VERSION@/rcp-macos-universal.tar.gz"
+    sha256 "@SHA256_MACOS@"
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/@REPO@/releases/download/v@VERSION@/rcp-linux-x86_64.tar.gz"
+      sha256 "@SHA256_LINUX_X86_64@"
+    end
+    on_arm do
+      url "https://github.com/@REPO@/releases/download/v@VERSION@/rcp-linux-aarch64.tar.gz"
+      sha256 "@SHA256_LINUX_AARCH64@"
+    end
+  end
+
+  def install
+    bin.install "rcp"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/rcp --version")
+  end
+end

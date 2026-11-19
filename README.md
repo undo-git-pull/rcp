@@ -12,15 +12,55 @@ A two-pane terminal file copier. The left pane is your local filesystem; the rig
  Tab switch · Enter open/preview · Space copy · d delete · / find · ^F grep
 ```
 
+## Install
+
+Release binaries are built for macOS (one universal binary for Apple silicon and Intel) and for Linux on x86_64 and aarch64. The Linux binaries are statically linked against musl, so one binary runs on any distribution. OpenSSL, libssh2 and zlib are compiled into every binary, so nothing else needs to be installed.
+
+### Homebrew
+
+```sh
+brew install undo-git-pull/tap/rcp
+```
+
+This works on macOS and on Linux with Homebrew.
+
+### Manual download
+
+Download the archive for your platform from the [releases page](https://github.com/undo-git-pull/rcp/releases):
+
+| Platform | Archive |
+|---|---|
+| macOS | `rcp-macos-universal.tar.gz` |
+| Linux x86_64 | `rcp-linux-x86_64.tar.gz` |
+| Linux aarch64 | `rcp-linux-aarch64.tar.gz` |
+
+Each archive has a `.sha256` file next to it. Extract `rcp` and put it somewhere on your `PATH`, such as `~/.local/bin`. The macOS binary is not notarized by Apple, so macOS blocks a copy downloaded through a browser. Clear the quarantine flag first:
+
+```sh
+xattr -d com.apple.quarantine rcp
+```
+
+Homebrew doesn't need this step.
+
+### From source
+
+```sh
+cargo install --git https://github.com/undo-git-pull/rcp
+```
+
+This needs the build requirements below.
+
 ## Building
 
 Requirements:
 
 - Rust 1.88 or newer (the crate uses edition 2024). Install with [rustup](https://rustup.rs).
-- A C compiler, `pkg-config` and the OpenSSL development headers, used to build libssh2.
-  - Debian/Ubuntu: `sudo apt install build-essential pkg-config libssl-dev`
-  - Fedora: `sudo dnf install gcc pkgconf-pkg-config openssl-devel`
-  - macOS: Xcode command line tools, plus `brew install openssl pkg-config`
+- A C compiler, `make` and `perl`. The build compiles OpenSSL, libssh2 and zlib from source and links them statically, so no OpenSSL development package is needed.
+  - Debian/Ubuntu: `sudo apt install build-essential perl`
+  - Fedora: `sudo dnf install gcc make perl`
+  - macOS: Xcode command line tools (`xcode-select --install`)
+
+The first build takes about a minute longer than later ones while OpenSSL compiles. Cargo caches the result.
 
 Build and install:
 
@@ -52,6 +92,27 @@ Format the code with rustfmt before committing:
 cargo fmt                      # rewrite files in place
 cargo fmt --check              # only report files that need formatting
 ```
+
+### Releasing
+
+1. Set `version` in `Cargo.toml`, run `cargo build` so `Cargo.lock` picks it up, and commit both.
+2. Tag and push:
+
+   ```sh
+   git tag v<version> && git push origin v<version>
+   ```
+
+   The [release workflow](.github/workflows/release.yml) checks that the tag matches `Cargo.toml` and runs the tests. It then builds the macOS universal binary and the two static Linux binaries (with [cross](https://github.com/cross-rs/cross)) and publishes them to a GitHub release with their `.sha256` files.
+
+3. When the release is published, update the Homebrew formula from this repository:
+
+   ```sh
+   scripts/update-formula.sh v<version> ../homebrew-tap
+   ```
+
+   The script downloads each release archive, checks it against its published checksum, and writes `Formula/rcp.rb` from `packaging/homebrew/rcp.rb.in`. It doesn't touch git, so review the diff in the tap, then commit and push.
+
+A local musl build is only needed to debug the Linux release build. Run `cross build --release --target x86_64-unknown-linux-musl` (needs Docker or Podman). A plain `cargo build` for the musl target needs `musl-gcc` from the `musl-tools` package and the kernel headers.
 
 ## Usage
 
