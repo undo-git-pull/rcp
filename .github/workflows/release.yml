@@ -58,7 +58,8 @@ jobs:
           codesign --force --sign - dist/pkg/rcp
           lipo -info dist/pkg/rcp
           # Fail if anything outside the OS is linked (e.g. Homebrew OpenSSL).
-          if otool -L dist/pkg/rcp | tail -n +2 | grep -vE '^\s+/(usr/lib|System)/'; then
+          # Library lines are indented; the per-architecture headers are not.
+          if otool -L dist/pkg/rcp | grep -E '^\s' | grep -vE '^\s+/(usr/lib|System)/'; then
             echo "::error::binary links non-system libraries"
             exit 1
           fi
