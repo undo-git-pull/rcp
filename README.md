@@ -1,6 +1,16 @@
 # rcp
 
+[![release build](https://github.com/undo-git-pull/rcp/actions/workflows/release.yml/badge.svg)](https://github.com/undo-git-pull/rcp/actions/workflows/release.yml)
+[![latest release](https://img.shields.io/github/v/release/undo-git-pull/rcp)](https://github.com/undo-git-pull/rcp/releases/latest)
+[![license: MIT](https://img.shields.io/github/license/undo-git-pull/rcp)](LICENSE)
+
 A two-pane terminal file copier. The left pane is your local filesystem; the right pane is another local directory or a remote host over SSH. Browse both sides, preview files, copy and delete, and search by file name (fzf-style) or by content (rg-style), locally or on the remote.
+
+```sh
+brew install undo-git-pull/tap/rcp
+```
+
+Works on macOS and Linux. See [Install](#install) for other options.
 
 ```
 ┏ Local: /home/ray/photos ━━━━━━━━━━┓┌ ray@nas: /volume1/photos ────────┐
@@ -22,7 +32,11 @@ Release binaries are built for macOS (one universal binary for Apple silicon and
 brew install undo-git-pull/tap/rcp
 ```
 
-This works on macOS and on Linux with Homebrew.
+This works on macOS and on Linux with Homebrew. To update to a new release:
+
+```sh
+brew update && brew upgrade rcp
+```
 
 ### Manual download
 
