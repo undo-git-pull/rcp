@@ -171,7 +171,9 @@ fn draw_pane(f: &mut Frame, area: Rect, pane: &mut Pane, active: bool) {
         }
         let name_style = match (marked, e.is_dir()) {
             (true, _) => Style::new().fg(Color::Yellow).bold(),
-            (false, true) => Style::new().fg(Color::Blue).bold(),
+            // Fixed 256-colour light blue (#5fafff). ANSI blue and bright blue
+            // follow the terminal palette and are too dark on many dark themes.
+            (false, true) => Style::new().fg(Color::Indexed(75)).bold(),
             _ => Style::new(),
         };
         let size = if e.is_dir() {
