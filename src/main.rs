@@ -29,7 +29,7 @@ fn open(loc: Location, args: &Args) -> Result<(Arc<dyn Backend>, PathBuf)> {
         }
         Location::Remote { mut target, path } => {
             target.port = args.port.or(target.port);
-            let opts = ConnectOpts { identity: args.identity.clone() };
+            let opts = ConnectOpts { identity: args.identity.clone(), jump: args.jump.clone() };
             let b = SftpFs::connect(&target, &opts)?;
             let cwd = b.canonicalize(&PathBuf::from(&path))?;
             Ok((Arc::new(b), cwd))

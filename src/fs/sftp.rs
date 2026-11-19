@@ -23,6 +23,7 @@ use ssh2::{
     OpenFlags, OpenType, Prompt, RenameFlags, Session, Sftp,
 };
 
+use super::jump::{self, Jump};
 use super::local::clip_hit;
 use super::{Backend, CaseMode, Emit, Entry, GrepQuery, Kind, SearchEvent, WalkOpts};
 use crate::cli::RemoteTarget;
@@ -42,6 +43,8 @@ const FX_NO_SUCH_PATH: i32 = 10;
 #[derive(Clone, Debug, Default)]
 pub struct ConnectOpts {
     pub identity: Option<PathBuf>,
+    /// `-J` hops; overrides `ProxyJump` from `~/.ssh/config`.
+    pub jump: Option<String>,
 }
 
 /// Where to connect, after applying `~/.ssh/config`.
@@ -52,6 +55,7 @@ struct Dest {
     port: u16,
     user: String,
     cfg_keys: Vec<PathBuf>,
+    jump: Option<Vec<String>>,
 }
 
 /// Credentials that worked, kept so `reconnect` never has to prompt.
@@ -90,14 +94,17 @@ pub struct SftpFs {
     /// Idle sessions for exec channels.
     exec_pool: Mutex<Vec<Session>>,
     tools: Mutex<Option<Tools>>,
+    /// Declared last so sessions through the jump close before it does.
+    jump: Option<Jump>,
 }
 
 impl SftpFs {
     /// Connects and authenticates. Runs before the TUI starts, so it may
     /// prompt on the terminal (host key confirmation, passwords).
     pub fn connect(target: &RemoteTarget, opts: &ConnectOpts) -> Result<SftpFs> {
-        let dest = resolve(target);
-        let (sess, host_key) = open_session(&dest, HostCheck::KnownHosts(&known_hosts_path()))?;
+        let dest = resolve(target, opts);
+        let jump = dest.jump.as_deref().map(Jump::start).transpose()?;
+        let (sess, host_key) = open_session(&dest, jump.as_ref(), HostCheck::KnownHosts(&known_hosts_path()))?;
         let cred = authenticate(&sess, &dest, opts)?;
         let conn = sftp_conn(sess).with_context(|| format!("sftp {}", dest.alias))?;
         let home = conn.sftp.realpath(Path::new(".")).with_context(|| format!("resolve home on {}", dest.alias))?;
@@ -109,6 +116,7 @@ impl SftpFs {
             conn: RwLock::new(Arc::new(conn)),
             exec_pool: Mutex::new(Vec::new()),
             tools: Mutex::new(None),
+            jump,
         })
     }
 
@@ -118,7 +126,7 @@ impl SftpFs {
 
     /// A fresh authenticated session, without prompting.
     fn new_session(&self) -> Result<Session> {
-        let (sess, _) = open_session(&self.dest, HostCheck::Pinned(&self.host_key))?;
+        let (sess, _) = open_session(&self.dest, self.jump.as_ref(), HostCheck::Pinned(&self.host_key))?;
         reauth(&sess, &self.dest.user, &self.cred)?;
         Ok(sess)
     }
@@ -380,8 +388,8 @@ impl Backend for SftpFs {
 
 // ---- connection setup ----------------------------------------------------
 
-/// Applies `~/.ssh/config`: explicit user/port > config > $USER / 22.
-fn resolve(t: &RemoteTarget) -> Dest {
+/// Applies `~/.ssh/config`: explicit user/port/jump > config > $USER / 22.
+fn resolve(t: &RemoteTarget, opts: &ConnectOpts) -> Dest {
     let params = dirs::home_dir()
         .and_then(|h| fs::File::open(h.join(".ssh/config")).ok())
         .and_then(|f| {
@@ -404,6 +412,7 @@ fn resolve(t: &RemoteTarget) -> Dest {
         port: t.port.or_else(|| p.and_then(|p| p.port)).unwrap_or(22),
         user,
         cfg_keys: p.and_then(|p| p.identity_file.clone()).unwrap_or_default(),
+        jump: opts.jump.clone().or_else(|| p.and_then(|p| p.proxy_jump.as_ref()).map(|j| j.join(","))).and_then(|j| jump::hops(&j)),
     }
 }
 
@@ -421,7 +430,7 @@ enum HostCheck<'a> {
     Pinned(&'a [u8]),
 }
 
-fn open_session(d: &Dest, check: HostCheck) -> Result<(Session, Vec<u8>)> {
+fn connect_tcp(d: &Dest) -> Result<TcpStream> {
     let addrs = (d.host.as_str(), d.port).to_socket_addrs().with_context(|| format!("resolve {}", d.host))?;
     let mut tcp = Err(io::Error::new(io::ErrorKind::NotFound, "no addresses"));
     for a in addrs {
@@ -432,8 +441,17 @@ fn open_session(d: &Dest, check: HostCheck) -> Result<(Session, Vec<u8>)> {
     }
     let tcp = tcp.with_context(|| format!("connect {}:{}", d.host, d.port))?;
     let _ = tcp.set_nodelay(true);
+    Ok(tcp)
+}
+
+/// `jump` must be the one started for `d`. Through a jump the host name is
+/// resolved on the last jump host, not here.
+fn open_session(d: &Dest, jump: Option<&Jump>, check: HostCheck) -> Result<(Session, Vec<u8>)> {
     let mut sess = Session::new()?;
-    sess.set_tcp_stream(tcp);
+    match jump {
+        Some(j) => sess.set_tcp_stream(j.tunnel(&d.host, d.port, matches!(check, HostCheck::KnownHosts(_)))?),
+        None => sess.set_tcp_stream(connect_tcp(d)?),
+    }
     sess.set_timeout(30_000);
     let kh_lines = match check {
         HostCheck::KnownHosts(p) => fs::read_to_string(p).unwrap_or_default(),
@@ -457,7 +475,10 @@ fn open_session(d: &Dest, check: HostCheck) -> Result<(Session, Vec<u8>)> {
         pref.extend(rest);
         let _ = sess.method_pref(MethodType::HostKey, &pref.join(","));
     }
-    sess.handshake().with_context(|| format!("ssh handshake with {}:{}", d.host, d.port))?;
+    sess.handshake().with_context(|| {
+        let via = d.jump.as_ref().map(|j| format!(" via {}", j.join(","))).unwrap_or_default();
+        format!("ssh handshake with {}:{}{via}", d.host, d.port)
+    })?;
     let (key, _) = sess.host_key().ok_or_else(|| anyhow!("{}: no host key", d.host))?;
     let key = key.to_vec();
     match check {
@@ -1200,6 +1221,7 @@ mod tests {
     }
 
     // ---- integration: RCP_TEST_SSH=user@127.0.0.1:2299 RCP_TEST_SSH_KEY=... ----
+    // (RCP_TEST_SSH_JUMP=... runs the same tests through a jump host.)
 
     fn connect_test() -> Option<SftpFs> {
         let spec = std::env::var("RCP_TEST_SSH").ok()?;
@@ -1208,7 +1230,10 @@ mod tests {
             Some((h, p)) => (h.to_string(), p.parse().ok()),
             None => (rest.to_string(), None),
         };
-        let opts = ConnectOpts { identity: std::env::var_os("RCP_TEST_SSH_KEY").map(PathBuf::from) };
+        let opts = ConnectOpts {
+            identity: std::env::var_os("RCP_TEST_SSH_KEY").map(PathBuf::from),
+            jump: std::env::var("RCP_TEST_SSH_JUMP").ok(),
+        };
         Some(SftpFs::connect(&RemoteTarget { user, host, port }, &opts).expect("connect"))
     }
 
@@ -1366,7 +1391,7 @@ mod tests {
         // Encrypted key with a stored passphrase, as reconnect would use it.
         if let (Ok(key), Ok(pp)) = (std::env::var("RCP_TEST_SSH_ENC_KEY"), std::env::var("RCP_TEST_SSH_ENC_PASS")) {
             assert!(key_is_encrypted(Path::new(&key)));
-            let (sess, _) = open_session(&fs.dest, HostCheck::Pinned(&fs.host_key)).unwrap();
+            let (sess, _) = open_session(&fs.dest, fs.jump.as_ref(), HostCheck::Pinned(&fs.host_key)).unwrap();
             let cred = Cred::Key { path: key.into(), passphrase: Some(pp) };
             reauth(&sess, &fs.dest.user, &cred).unwrap();
         }

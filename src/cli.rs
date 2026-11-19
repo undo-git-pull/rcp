@@ -15,6 +15,10 @@ pub struct Args {
     /// SSH private key
     #[arg(short, long)]
     pub identity: Option<PathBuf>,
+    /// Jump hosts, comma-separated [user@]host[:port], as for ssh -J
+    /// (otherwise ProxyJump from ~/.ssh/config; needs the ssh client)
+    #[arg(short = 'J', long, value_name = "HOSTS")]
+    pub jump: Option<String>,
     /// Show dotfiles on startup
     #[arg(long)]
     pub hidden: bool,

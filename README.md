@@ -42,7 +42,7 @@ RCP_TEST_SSH=user@host:22 RCP_TEST_SSH_KEY=~/.ssh/id_ed25519 \
 RCP_KNOWN_HOSTS=/tmp/test_known_hosts cargo test
 ```
 
-`RCP_KNOWN_HOSTS` makes rcp read and write that file instead of `~/.ssh/known_hosts`, so tests don't touch your real one.
+`RCP_KNOWN_HOSTS` makes rcp read and write that file instead of `~/.ssh/known_hosts`, so tests don't touch your real one. Add `RCP_TEST_SSH_JUMP=user@jumphost` to run the same test through a jump host.
 
 ## Usage
 
@@ -54,6 +54,7 @@ rcp [OPTIONS] [LEFT] [RIGHT]
 
   -p, --port <PORT>          SSH port (otherwise from ~/.ssh/config, then 22)
   -i, --identity <FILE>      SSH private key
+  -J, --jump <HOSTS>         Jump hosts, comma-separated [user@]host[:port], as for ssh -J
       --hidden               Show dotfiles on startup
 ```
 
@@ -70,7 +71,8 @@ rcp . ray@10.0.0.5:/srv/www -p 2222 -i ~/.ssh/deploy_key
 
 ### SSH
 
-- Host aliases in `~/.ssh/config` are resolved (`HostName`, `User`, `Port`, `IdentityFile`). `ProxyJump` and `ProxyCommand` are not supported.
+- Host aliases in `~/.ssh/config` are resolved (`HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`). `ProxyCommand` is not supported.
+- Jump hosts come from `-J` or the config's `ProxyJump`, and are handled by the OpenSSH client (`ssh` must be on `PATH`; Unix only). rcp keeps one control connection to the last jump host for the session, so jump-host logins, including passwords, happen once, before the interface opens. Authentication to the destination itself works as below. If the jump connection drops, `r` restarts it without prompting, which needs ssh-agent or a key without a passphrase.
 - Authentication tries ssh-agent, then `-i`, then the config's `IdentityFile`s, then `~/.ssh/id_ed25519`, `id_ecdsa` and `id_rsa`, then a password prompt. Prompts happen before the interface opens.
 - Host keys are checked against `~/.ssh/known_hosts`. For an unknown host you're shown the fingerprint and asked to confirm; a changed key is refused.
 - If the connection drops, press `r` to reconnect.

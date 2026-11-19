@@ -9,6 +9,7 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 
+pub mod jump;
 pub mod local;
 pub mod sftp;
 
